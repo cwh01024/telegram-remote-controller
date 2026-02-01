@@ -27,9 +27,9 @@ telegram-remote-controller/
 ```
 
 ## Acceptance Criteria
-- [ ] `go build ./...` 成功
-- [ ] GitHub repo 建立並推送
-- [ ] README 說明專案用途
+- [x] `go build ./...` 成功
+- [x] GitHub repo 建立並推送
+- [x] README 說明專案用途
 
 ## TDD
 ```go
