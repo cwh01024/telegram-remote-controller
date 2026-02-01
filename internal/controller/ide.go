@@ -20,6 +20,7 @@ const (
 type IDEController struct {
 	appName    string
 	inputDelay time.Duration
+	screenshot *Screenshot
 }
 
 // NewIDEController creates a new IDE controller
@@ -27,6 +28,7 @@ func NewIDEController() *IDEController {
 	return &IDEController{
 		appName:    AntigravityAppName,
 		inputDelay: DefaultInputDelay,
+		screenshot: NewScreenshot(),
 	}
 }
 
@@ -46,7 +48,7 @@ func (c *IDEController) EnsureReady() error {
 }
 
 // InputPrompt inputs a prompt into the IDE
-// Uses clipboard to paste long text for reliability
+// Uses clipboard to paste for reliability with all characters
 func (c *IDEController) InputPrompt(prompt string) error {
 	log.Printf("Inputting prompt (%d chars)", len(prompt))
 
@@ -55,21 +57,13 @@ func (c *IDEController) InputPrompt(prompt string) error {
 		return err
 	}
 
-	// For long prompts, use clipboard
-	if len(prompt) > 100 {
-		return c.inputViaClipboard(prompt)
-	}
-
-	// For short prompts, type directly
-	return c.inputViaTyping(prompt)
+	// Always use clipboard for reliable input (handles spaces, unicode, etc.)
+	return c.inputViaClipboard(prompt)
 }
 
 // inputViaClipboard inputs text by copying to clipboard and pasting
 func (c *IDEController) inputViaClipboard(text string) error {
-	// Save current clipboard (optional, for restoration)
-	// oldClipboard, _ := automation.GetClipboard()
-
-	// Set new clipboard content
+	// Set clipboard content (handles all characters correctly)
 	if err := automation.SetClipboard(text); err != nil {
 		return fmt.Errorf("failed to set clipboard: %w", err)
 	}
@@ -81,17 +75,6 @@ func (c *IDEController) inputViaClipboard(text string) error {
 		return fmt.Errorf("failed to paste: %w", err)
 	}
 
-	// Restore old clipboard (optional)
-	// automation.SetClipboard(oldClipboard)
-
-	return nil
-}
-
-// inputViaTyping inputs text by simulating keyboard typing
-func (c *IDEController) inputViaTyping(text string) error {
-	if err := automation.TypeText(text); err != nil {
-		return fmt.Errorf("failed to type text: %w", err)
-	}
 	return nil
 }
 
@@ -137,6 +120,27 @@ func (c *IDEController) ClearInput() error {
 
 // TakeScreenshot takes a screenshot of the current state
 func (c *IDEController) TakeScreenshot() (string, error) {
-	screenshot := NewScreenshot()
-	return screenshot.CaptureScreen()
+	// Focus Antigravity first
+	automation.OpenApp(c.appName)
+	time.Sleep(300 * time.Millisecond)
+
+	// Try to capture the Antigravity window, fallback to full screen
+	return c.screenshot.CaptureScreen()
+}
+
+// TakeAntigravityScreenshot specifically captures the Antigravity window
+func (c *IDEController) TakeAntigravityScreenshot() (string, error) {
+	// Focus Antigravity first
+	if err := automation.OpenApp(c.appName); err != nil {
+		log.Printf("Warning: could not focus Antigravity: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Try window capture first
+	path, err := c.screenshot.CaptureAntigravityWindow()
+	if err != nil {
+		// Fallback to full screen
+		return c.screenshot.CaptureScreen()
+	}
+	return path, nil
 }

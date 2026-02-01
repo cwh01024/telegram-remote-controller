@@ -19,14 +19,66 @@ func NewScreenshot() *Screenshot {
 	}
 }
 
-// CaptureScreen captures the entire screen
+// CaptureScreen captures the entire screen (all displays)
 func (s *Screenshot) CaptureScreen() (string, error) {
 	filename := fmt.Sprintf("screenshot_%d.png", time.Now().Unix())
 	path := filepath.Join(s.outputDir, filename)
 
+	// Use -x for silent, capture main display
 	cmd := exec.Command("screencapture", "-x", path)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("screencapture failed: %w", err)
+	}
+
+	return path, nil
+}
+
+// CaptureAllDisplays captures all displays into one image
+func (s *Screenshot) CaptureAllDisplays() (string, error) {
+	filename := fmt.Sprintf("all_displays_%d.png", time.Now().Unix())
+	path := filepath.Join(s.outputDir, filename)
+
+	// -x silent, no -D flag = captures all displays
+	cmd := exec.Command("screencapture", "-x", path)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("screencapture failed: %w", err)
+	}
+
+	return path, nil
+}
+
+// CaptureDisplay captures a specific display by number (1-indexed)
+func (s *Screenshot) CaptureDisplay(displayNum int) (string, error) {
+	filename := fmt.Sprintf("display%d_%d.png", displayNum, time.Now().Unix())
+	path := filepath.Join(s.outputDir, filename)
+
+	// -D flag specifies which display to capture
+	cmd := exec.Command("screencapture", "-x", "-D", fmt.Sprintf("%d", displayNum), path)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("screencapture failed: %w", err)
+	}
+
+	return path, nil
+}
+
+// CaptureAntigravityWindow captures the Antigravity window specifically
+func (s *Screenshot) CaptureAntigravityWindow() (string, error) {
+	filename := fmt.Sprintf("antigravity_%d.png", time.Now().Unix())
+	path := filepath.Join(s.outputDir, filename)
+
+	// Use screencapture with window ID via AppleScript
+	script := fmt.Sprintf(`
+		tell application "System Events"
+			set frontApp to first application process whose frontmost is true
+			set windowID to id of first window of frontApp
+		end tell
+		do shell script "screencapture -x -l " & windowID & " %s"
+	`, path)
+
+	cmd := exec.Command("osascript", "-e", script)
+	if err := cmd.Run(); err != nil {
+		// Fallback to regular screenshot if window capture fails
+		return s.CaptureScreen()
 	}
 
 	return path, nil

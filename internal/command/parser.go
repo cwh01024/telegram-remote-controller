@@ -13,12 +13,25 @@ const (
 	CmdHelp       = "help"
 )
 
+// Model aliases
+var modelAliases = map[string]string{
+	"thinking": "Claude Opus 4.5 (Thinking)",
+	"opus":     "Claude Opus 4.5 (Thinking)",
+	"coding":   "Gemini 3 Pro",
+	"gemini":   "Gemini 3 Pro",
+	"claude":   "Claude Opus 4.5",
+	"sonnet":   "Claude Sonnet 4",
+}
+
+// DefaultModel is used when no model is specified
+const DefaultModel = "Claude Opus 4.5 (Thinking)"
+
 // Command represents a parsed user command
 type Command struct {
 	Name   string   // Command name (run, status, screenshot, help)
-	Model  string   // Optional model selection
+	Model  string   // Model selection (expanded from alias)
 	Args   []string // Additional arguments
-	Prompt string   // The main prompt content
+	Prompt string   // The main prompt content (raw, preserved)
 }
 
 // Errors
@@ -37,25 +50,31 @@ func Parse(input string) (*Command, error) {
 
 	// Check if it's a command (starts with /)
 	if !strings.HasPrefix(input, "/") {
-		// Treat non-command messages as run commands
+		// Treat non-command messages as run commands with default model
 		return &Command{
 			Name:   CmdRun,
+			Model:  DefaultModel,
 			Prompt: input,
 		}, nil
 	}
 
-	// Split into parts
-	parts := strings.Fields(input)
-	if len(parts) == 0 {
-		return nil, ErrEmptyInput
+	// Find command name (first word)
+	spaceIdx := strings.Index(input, " ")
+	var cmdPart, rest string
+	if spaceIdx == -1 {
+		cmdPart = input
+		rest = ""
+	} else {
+		cmdPart = input[:spaceIdx]
+		rest = strings.TrimSpace(input[spaceIdx+1:])
 	}
 
 	// Extract command name (remove leading /)
-	cmdName := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
+	cmdName := strings.ToLower(strings.TrimPrefix(cmdPart, "/"))
 
 	switch cmdName {
 	case CmdRun:
-		return parseRunCommand(parts[1:])
+		return parseRunCommand(rest)
 	case CmdStatus:
 		return &Command{Name: CmdStatus}, nil
 	case CmdScreenshot:
@@ -68,26 +87,39 @@ func Parse(input string) (*Command, error) {
 }
 
 // parseRunCommand parses a /run command with optional -m flag
-func parseRunCommand(args []string) (*Command, error) {
+// Preserves the entire prompt with spaces
+func parseRunCommand(rest string) (*Command, error) {
 	cmd := &Command{
-		Name: CmdRun,
+		Name:  CmdRun,
+		Model: DefaultModel,
 	}
 
-	// Check for model flag
-	i := 0
-	for i < len(args) {
-		if args[i] == "-m" && i+1 < len(args) {
-			cmd.Model = args[i+1]
-			i += 2
-			continue
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return nil, ErrMissingPrompt
+	}
+
+	// Check for model flag at the beginning
+	if strings.HasPrefix(rest, "-m ") || strings.HasPrefix(rest, "-m\t") {
+		// Remove "-m "
+		rest = strings.TrimSpace(rest[3:])
+
+		// Find the model name (first word/token)
+		spaceIdx := strings.Index(rest, " ")
+		if spaceIdx == -1 {
+			// Only model name, no prompt
+			return nil, ErrMissingPrompt
 		}
-		break
+
+		modelName := rest[:spaceIdx]
+		rest = strings.TrimSpace(rest[spaceIdx+1:])
+
+		// Expand model alias
+		cmd.Model = expandModelAlias(modelName)
 	}
 
-	// Rest is the prompt
-	if i < len(args) {
-		cmd.Prompt = strings.Join(args[i:], " ")
-	}
+	// Rest is the entire prompt (preserved with spaces)
+	cmd.Prompt = rest
 
 	if cmd.Prompt == "" {
 		return nil, ErrMissingPrompt
@@ -96,17 +128,34 @@ func parseRunCommand(args []string) (*Command, error) {
 	return cmd, nil
 }
 
+// expandModelAlias expands a model alias to full name
+func expandModelAlias(alias string) string {
+	lower := strings.ToLower(alias)
+	if full, ok := modelAliases[lower]; ok {
+		return full
+	}
+	// Return as-is if not an alias
+	return alias
+}
+
 // HelpText returns the help message
 func HelpText() string {
-	return `可用指令：
+	return `🤖 可用指令：
 
-/run <prompt> - 執行 prompt
-/run -m <model> <prompt> - 使用指定 model 執行
-/status - 檢查系統狀態
+📝 執行 Prompt：
+/run <prompt> - 使用預設 model
+/run -m <model> <prompt> - 指定 model
+
+🎯 Model 別名：
+• thinking / opus → Claude Opus 4.5 (Thinking)
+• coding / gemini → Gemini 3 Pro  
+• claude → Claude Opus 4.5
+• sonnet → Claude Sonnet 4
+
+📸 其他：
 /screenshot - 截取螢幕畫面
+/status - 檢查系統狀態
 /help - 顯示此說明
 
-支援的 models: gemini, claude, o3
-
-直接發送文字也會被當作 /run 處理。`
+💡 直接發送文字也會用預設 model 執行！`
 }
