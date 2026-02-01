@@ -36,9 +36,9 @@ type IDEController interface {
 - 送出可能是 Cmd+Enter 或 Enter
 
 ## Acceptance Criteria
-- [ ] 能開啟 Antigravity
-- [ ] 能輸入文字到輸入框
-- [ ] 能觸發送出
+- [x] 能開啟 Antigravity
+- [x] 能輸入文字到輸入框
+- [x] 能觸發送出
 
 ## TDD
 ```go
