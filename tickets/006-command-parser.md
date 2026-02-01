@@ -34,9 +34,9 @@ func Parse(input string) (*Command, error)
 ```
 
 ## Acceptance Criteria
-- [ ] 正確解析 /run
-- [ ] 正確解析 -m 參數
-- [ ] 處理無效指令
+- [x] 正確解析 /run
+- [x] 正確解析 -m 參數
+- [x] 處理無效指令
 
 ## TDD
 ```go
