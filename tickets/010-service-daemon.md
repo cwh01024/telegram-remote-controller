@@ -44,9 +44,9 @@ launchctl load ~/Library/LaunchAgents/com.telegram.remote-controller.plist
 ```
 
 ## Acceptance Criteria
-- [ ] 服務能隨開機啟動
-- [ ] 日誌正確輸出
-- [ ] 安裝/移除腳本可用
+- [x] 服務能隨開機啟動
+- [x] 日誌正確輸出
+- [x] 安裝/移除腳本可用
 
 ## TDD
 - 手動驗證服務啟動

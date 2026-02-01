@@ -34,9 +34,9 @@ screencapture -w /tmp/screenshot.png
 ```
 
 ## Acceptance Criteria
-- [ ] 能截圖並儲存
-- [ ] 能透過 Telegram 發送
-- [ ] 自動清理舊檔
+- [x] 能截圖並儲存
+- [x] 能透過 Telegram 發送
+- [x] 自動清理舊檔
 
 ## TDD
 ```go

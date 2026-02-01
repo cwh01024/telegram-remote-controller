@@ -39,9 +39,9 @@ func Retry(attempts int, delay time.Duration, fn func() error) error
 ```
 
 ## Acceptance Criteria
-- [ ] 錯誤能正確分類
-- [ ] 重試機制運作正常
-- [ ] 錯誤訊息發送到 Telegram
+- [x] 錯誤能正確分類
+- [x] 重試機制運作正常
+- [x] 錯誤訊息發送到 Telegram
 
 ## TDD
 ```go

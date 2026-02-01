@@ -34,9 +34,9 @@ type ResultCapture interface {
 ```
 
 ## Acceptance Criteria
-- [ ] 能等待指定時間
-- [ ] 能截圖當前狀態
-- [ ] 回報結果到 Telegram
+- [x] 能等待指定時間
+- [x] 能截圖當前狀態
+- [x] 回報結果到 Telegram
 
 ## TDD
 ```go
