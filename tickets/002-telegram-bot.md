@@ -28,9 +28,9 @@ type Bot interface {
 - `TELEGRAM_BOT_TOKEN`
 
 ## Acceptance Criteria
-- [ ] Bot 連接成功
-- [ ] 能接收並 log 訊息
-- [ ] 能發送回覆
+- [x] Bot 連接成功
+- [x] 能接收並 log 訊息
+- [x] 能發送回覆
 
 ## TDD
 ```go
