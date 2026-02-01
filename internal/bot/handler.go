@@ -2,19 +2,114 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log"
 
+	"github.com/applejobs/telegram-remote-controller/internal/auth"
+	"github.com/applejobs/telegram-remote-controller/internal/command"
+	"github.com/applejobs/telegram-remote-controller/internal/controller"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// EchoHandler is a simple handler that echoes messages back
-type EchoHandler struct {
-	Bot *Bot
+// MainHandler handles all incoming messages with full functionality
+type MainHandler struct {
+	Bot  *Bot
+	Auth *auth.Whitelist
+	IDE  *controller.IDEController
 }
 
-// HandleMessage echoes the received message
-func (h *EchoHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) error {
-	reply := "收到: " + msg.Text
-	log.Printf("Echoing to %d: %s", msg.Chat.ID, reply)
-	return h.Bot.SendText(msg.Chat.ID, reply)
+// NewMainHandler creates a new main handler
+func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
+	return &MainHandler{
+		Bot:  bot,
+		Auth: auth.NewWhitelist(allowedUsers),
+		IDE:  controller.NewIDEController(),
+	}
+}
+
+// HandleMessage processes incoming messages
+func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) error {
+	userID := msg.From.ID
+	chatID := msg.Chat.ID
+
+	// Check authorization
+	if !h.Auth.IsAuthorized(userID) {
+		log.Printf("Unauthorized access from user %d", userID)
+		return h.Bot.SendText(chatID, "⛔ 你沒有使用權限")
+	}
+
+	// Parse command
+	cmd, err := command.Parse(msg.Text)
+	if err != nil {
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ %v", err))
+	}
+
+	// Execute command
+	switch cmd.Name {
+	case command.CmdRun:
+		return h.handleRun(chatID, cmd)
+	case command.CmdScreenshot:
+		return h.handleScreenshot(chatID)
+	case command.CmdStatus:
+		return h.handleStatus(chatID)
+	case command.CmdHelp:
+		return h.Bot.SendText(chatID, command.HelpText())
+	default:
+		return h.Bot.SendText(chatID, "❓ 未知指令，使用 /help 查看說明")
+	}
+}
+
+// handleRun executes a prompt in Antigravity
+func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
+	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
+		orDefault(cmd.Model, "default"), cmd.Prompt))
+
+	// Ensure IDE is ready
+	if err := h.IDE.EnsureReady(); err != nil {
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ IDE 未就緒: %v", err))
+	}
+
+	// Input the prompt
+	if err := h.IDE.InputPrompt(cmd.Prompt); err != nil {
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 輸入失敗: %v", err))
+	}
+
+	// Submit
+	if err := h.IDE.Submit(); err != nil {
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
+	}
+
+	return h.Bot.SendText(chatID, "✅ 已送出！使用 /screenshot 查看結果")
+}
+
+// handleScreenshot takes and sends a screenshot
+func (h *MainHandler) handleScreenshot(chatID int64) error {
+	h.Bot.SendText(chatID, "📸 截圖中...")
+
+	path, err := h.IDE.TakeScreenshot()
+	if err != nil {
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 截圖失敗: %v", err))
+	}
+
+	return h.Bot.SendPhoto(chatID, path)
+}
+
+// handleStatus returns system status
+func (h *MainHandler) handleStatus(chatID int64) error {
+	status := `📊 系統狀態
+
+✅ Bot: 運行中
+✅ Auth: 已授權
+💻 IDE: Antigravity
+
+發送 /screenshot 查看螢幕`
+
+	return h.Bot.SendText(chatID, status)
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

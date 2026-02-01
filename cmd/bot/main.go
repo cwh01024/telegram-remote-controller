@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/applejobs/telegram-remote-controller/config"
@@ -20,6 +22,10 @@ func main() {
 		log.Fatalf("Config error: %v", err)
 	}
 
+	// Parse allowed users from env
+	allowedUsers := parseAllowedUsers()
+	log.Printf("Allowed users: %v", allowedUsers)
+
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -30,10 +36,12 @@ func main() {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
 
-	// Set echo handler for testing
-	echoHandler := &bot.EchoHandler{Bot: telegramBot}
-	telegramBot, _ = bot.New(cfg.TelegramBotToken, echoHandler)
-	echoHandler.Bot = telegramBot
+	// Create main handler with auth
+	handler := bot.NewMainHandler(telegramBot, allowedUsers)
+
+	// Recreate bot with handler
+	telegramBot, _ = bot.New(cfg.TelegramBotToken, handler)
+	handler.Bot = telegramBot
 
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
@@ -52,4 +60,23 @@ func main() {
 	}
 
 	log.Println("Goodbye!")
+}
+
+// parseAllowedUsers parses ALLOWED_USER_ID from environment
+func parseAllowedUsers() []int64 {
+	env := os.Getenv("ALLOWED_USER_ID")
+	if env == "" {
+		// Default to allowing all (for testing)
+		log.Println("Warning: ALLOWED_USER_ID not set, allowing all users")
+		return nil
+	}
+
+	var users []int64
+	for _, s := range strings.Split(env, ",") {
+		s = strings.TrimSpace(s)
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+			users = append(users, id)
+		}
+	}
+	return users
 }
