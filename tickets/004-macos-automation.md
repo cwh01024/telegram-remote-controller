@@ -39,9 +39,9 @@ end tell
 ```
 
 ## Acceptance Criteria
-- [ ] 能執行 AppleScript
-- [ ] 能開啟指定 App
-- [ ] 能模擬鍵盤輸入
+- [x] 能執行 AppleScript
+- [x] 能開啟指定 App
+- [x] 能模擬鍵盤輸入
 
 ## TDD
 ```go
