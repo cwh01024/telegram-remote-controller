@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/applejobs/telegram-remote-controller/internal/auth"
 	"github.com/applejobs/telegram-remote-controller/internal/command"
 	"github.com/applejobs/telegram-remote-controller/internal/controller"
-	"github.com/applejobs/telegram-remote-controller/internal/ocr"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -17,8 +19,7 @@ type MainHandler struct {
 	Bot     *Bot
 	Auth    *auth.Whitelist
 	IDE     *controller.IDEController
-	OCR     *ocr.LocalOCR
-	Monitor *controller.ResponseMonitor
+	Watcher *controller.FileWatcher
 }
 
 // NewMainHandler creates a new main handler
@@ -27,8 +28,7 @@ func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
 		Bot:     bot,
 		Auth:    auth.NewWhitelist(allowedUsers),
 		IDE:     controller.NewIDEController(),
-		OCR:     ocr.NewLocalOCR(),
-		Monitor: controller.NewResponseMonitor(),
+		Watcher: controller.NewFileWatcher(),
 	}
 }
 
@@ -64,10 +64,13 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 }
 
-// handleRun executes a prompt in Antigravity and extracts the response
+// handleRun executes a prompt in Antigravity and watches for response file
 func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
 		orDefault(cmd.Model, "default"), cmd.Prompt))
+
+	// Record time before submission
+	startTime := time.Now()
 
 	// Ensure IDE is ready
 	if err := h.IDE.EnsureReady(); err != nil {
@@ -84,36 +87,22 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
 	}
 
-	h.Bot.SendText(chatID, "✅ 已送出！等待回應中...\n（每 5 秒監測，穩定 10 秒後提取回應）")
+	responseDir := h.Watcher.GetWatchDir()
+	h.Bot.SendText(chatID, fmt.Sprintf("✅ 已送出！\n\n監聽回應目錄: %s\n\n將回應寫入上述目錄的 .txt 或 .md 檔案即可收到通知。", responseDir))
 
-	// Cleanup old screenshots
-	h.Monitor.CleanupOldScreenshots()
+	// Clean up old response files
+	h.Watcher.CleanupOldFiles(1 * time.Hour)
 
-	// Wait for screen to stabilize (response complete)
-	screenshotPath, err := h.Monitor.WaitForStableScreen()
+	// Wait for response file
+	content, err := h.Watcher.WaitForLatestResponse(startTime)
 	if err != nil {
-		log.Printf("Response monitoring failed: %v", err)
-		return h.Bot.SendText(chatID, "⏱️ 監測超時。使用 /screenshot 查看結果。")
+		log.Printf("File watcher timed out: %v", err)
+		return h.Bot.SendText(chatID, "⏱️ 等待回應檔案超時（3分鐘）。\n\n請將回應寫入: "+responseDir)
 	}
 
-	// Use local OCR to extract text
-	h.Bot.SendText(chatID, "🔍 正在讀取回應內容（本地 OCR）...")
-
-	responseText, err := h.OCR.ExtractText(screenshotPath)
-	if err != nil {
-		log.Printf("Local OCR failed: %v", err)
-		// Fallback to sending screenshot
-		h.Bot.SendText(chatID, "⚠️ 文字提取失敗，發送截圖：")
-		return h.Bot.SendPhoto(chatID, screenshotPath)
-	}
-
-	// Send the extracted response text
-	if len(responseText) > 4000 {
-		// Telegram has 4096 char limit
-		return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s...\n\n_（已截斷，完整回應 %d 字）_", responseText[:4000], len(responseText)))
-	}
-
-	return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s", responseText))
+	// Format and send response
+	formatted := h.Watcher.FormatResponseForTelegram(content)
+	return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s", formatted))
 }
 
 // handleScreenshot takes and sends a screenshot of the specified app
@@ -144,21 +133,33 @@ func (h *MainHandler) handleScreenshot(chatID int64, appName string) error {
 
 // handleStatus returns system status
 func (h *MainHandler) handleStatus(chatID int64) error {
-	ocrStatus := "❌ 不可用"
-	if h.OCR.IsAvailable() {
-		ocrStatus = "✅ macOS Vision OCR"
+	responseDir := h.Watcher.GetWatchDir()
+
+	// Check if response directory exists
+	dirExists := "✅ 存在"
+	if _, err := os.Stat(responseDir); os.IsNotExist(err) {
+		dirExists = "❌ 不存在"
 	}
+
+	// Count response files
+	files, _ := filepath.Glob(filepath.Join(responseDir, "*"))
+	fileCount := len(files)
 
 	status := fmt.Sprintf(`📊 系統狀態
 
 ✅ Bot: 運行中
 ✅ Auth: 已授權
 💻 IDE: Antigravity
-📸 回應偵測: 每 5 秒監測，穩定 10 秒
-🔍 文字提取: %s
+📁 回應目錄: %s
+   狀態: %s
+   檔案數: %d
 
-📝 /run 會監測螢幕並用本地 OCR 提取文字回應
-📸 /screenshot <app> 截取指定應用程式`, ocrStatus)
+📝 使用方式:
+1. 發送 /run <問題>
+2. Antigravity 回應後，將內容保存到回應目錄
+3. Bot 自動偵測並發送給你
+
+📸 /screenshot <app> 截取指定應用程式`, responseDir, dirExists, fileCount)
 
 	return h.Bot.SendText(chatID, status)
 }

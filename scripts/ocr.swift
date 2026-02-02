@@ -26,22 +26,32 @@ guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil
 // Create request handler
 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
 
+// Store all text observations with their positions
+var textBlocks: [(String, CGFloat)] = []
+
 // Create request
 let request = VNRecognizeTextRequest { request, error in
     if let error = error {
-        print("Error: \(error.localizedDescription)")
+        fputs("Error: \(error.localizedDescription)\n", stderr)
         return
     }
     
     guard let observations = request.results as? [VNRecognizedTextObservation] else {
-        print("Error: No text observations")
+        fputs("Error: No text observations\n", stderr)
         return
     }
     
-    // Extract and print text
-    for observation in observations {
+    // Sort observations by Y position (top to bottom)
+    // Note: Vision uses bottom-left origin, so we sort by (1 - y) for top-to-bottom
+    let sortedObservations = observations.sorted { 
+        (1 - $0.boundingBox.origin.y) < (1 - $1.boundingBox.origin.y) 
+    }
+    
+    for observation in sortedObservations {
         if let candidate = observation.topCandidates(1).first {
-            print(candidate.string)
+            let text = candidate.string
+            let y = observation.boundingBox.origin.y
+            textBlocks.append((text, y))
         }
     }
 }
@@ -55,6 +65,60 @@ request.usesLanguageCorrection = true
 do {
     try handler.perform([request])
 } catch {
-    print("Error performing OCR: \(error.localizedDescription)")
+    fputs("Error performing OCR: \(error.localizedDescription)\n", stderr)
     exit(1)
+}
+
+// Filter out UI elements and extract main content
+let uiPatterns = [
+    "Antigravity", "File", "Edit", "Selection", "View", "Go", "Run",
+    "Terminal", "Window", "Help", "Extensions", "GitHub", "applejobs",
+    "package ", "import (", "import(", "func ", "type ", "const ",
+    "//", "/*", "*/", ".go", ".swift", ".py", ".js", ".ts",
+    "〉", "›", ">", "internal", "controller", "screenshots"
+]
+
+var filteredLines: [String] = []
+var currentGroup: [String] = []
+var lastY: CGFloat = -1
+
+for (text, y) in textBlocks {
+    // Skip very short lines (likely UI fragments)
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    if trimmed.count < 2 {
+        continue
+    }
+    
+    // Skip lines matching UI patterns
+    var isUI = false
+    for pattern in uiPatterns {
+        if trimmed.hasPrefix(pattern) || trimmed.contains(pattern) {
+            isUI = true
+            break
+        }
+    }
+    
+    if !isUI {
+        // Group lines that are close together vertically
+        if lastY >= 0 && abs(y - lastY) > 0.05 {
+            // New group - add spacing
+            if !currentGroup.isEmpty {
+                filteredLines.append(contentsOf: currentGroup)
+                filteredLines.append("")
+                currentGroup = []
+            }
+        }
+        currentGroup.append(trimmed)
+        lastY = y
+    }
+}
+
+// Add remaining group
+if !currentGroup.isEmpty {
+    filteredLines.append(contentsOf: currentGroup)
+}
+
+// Output filtered text
+for line in filteredLines {
+    print(line)
 }

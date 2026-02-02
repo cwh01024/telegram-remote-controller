@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -40,30 +41,43 @@ func (o *LocalOCR) ExtractText(imagePath string) (string, error) {
 	}
 
 	text := strings.TrimSpace(string(output))
-	log.Printf("OCR extracted %d characters", len(text))
+	log.Printf("OCR extracted %d characters (before cleanup)", len(text))
 
-	return text, nil
+	// Clean up the extracted text
+	cleaned := o.cleanupText(text)
+	log.Printf("OCR cleaned to %d characters", len(cleaned))
+
+	return cleaned, nil
 }
 
-// ExtractResponseFromScreenshot extracts AI response from IDE screenshot
-// Filters out UI elements and extracts actual response content
-func (o *LocalOCR) ExtractResponseFromScreenshot(imagePath string) (string, error) {
-	// First, get all text from the image
-	fullText, err := o.ExtractText(imagePath)
-	if err != nil {
-		return "", err
+// cleanupText removes noise and extracts meaningful content
+func (o *LocalOCR) cleanupText(text string) string {
+	lines := strings.Split(text, "\n")
+	var cleanedLines []string
+
+	// Patterns to skip (UI elements, file names, code artifacts)
+	skipPatterns := []regexp.Regexp{
+		*regexp.MustCompile(`^\d+月\d+日`),         // Date
+		*regexp.MustCompile(`^[上下]午\d+:\d+`),     // Time
+		*regexp.MustCompile(`^Open\s`),           // "Open ..."
+		*regexp.MustCompile(`^S\s?Code`),         // "S Code"
+		*regexp.MustCompile(`^f\d+\s`),           // "f2 Walkthrough"
+		*regexp.MustCompile(`^@id:`),             // "@id:..."
+		*regexp.MustCompile(`^import[（(]`),       // import statements
+		*regexp.MustCompile(`^\"`),               // Quoted strings (code)
+		*regexp.MustCompile(`^\d+$`),             // Just numbers (line numbers)
+		*regexp.MustCompile(`^Step\s+Id:`),       // "Step Id:"
+		*regexp.MustCompile(`uses\s+Open\s+VSX`), // VSX message
+		*regexp.MustCompile(`marketplace`),       // marketplace message
+		*regexp.MustCompile(`Checked\s+command`), // debug messages
+		*regexp.MustCompile(`^回\s`),              // UI icons
+		*regexp.MustCompile(`^[〉›>\[\]{}()]+$`),  // Brackets only
 	}
 
-	// Filter out common UI elements (menu bar, file names, etc.)
-	lines := strings.Split(fullText, "\n")
-	var responseLines []string
-
-	// Common UI elements to skip
-	skipPrefixes := []string{
-		"Antigravity", "File", "Edit", "Selection", "View", "Go", "Run",
-		"Terminal", "Window", "Help", "Extensions", "GitHub",
-		"applejobs", "package ", "import", "func ", "type ", "const ",
-		"//", "/*", "*/",
+	// Patterns that indicate actual response content
+	responseIndicators := []string{
+		"✅", "❌", "🚀", "📝", "📸", "🔍", "⏱️", "⚠️",
+		"回應", "已送出", "執行", "完成", "失敗", "成功",
 	}
 
 	for _, line := range lines {
@@ -72,15 +86,15 @@ func (o *LocalOCR) ExtractResponseFromScreenshot(imagePath string) (string, erro
 			continue
 		}
 
-		// Skip very short lines (likely UI fragments)
+		// Skip very short lines
 		if len(line) < 3 {
 			continue
 		}
 
-		// Skip lines that look like UI elements
+		// Check skip patterns
 		skip := false
-		for _, prefix := range skipPrefixes {
-			if strings.HasPrefix(line, prefix) {
+		for _, pattern := range skipPatterns {
+			if pattern.MatchString(line) {
 				skip = true
 				break
 			}
@@ -89,14 +103,33 @@ func (o *LocalOCR) ExtractResponseFromScreenshot(imagePath string) (string, erro
 			continue
 		}
 
-		responseLines = append(responseLines, line)
+		// Keep lines with response indicators
+		hasIndicator := false
+		for _, indicator := range responseIndicators {
+			if strings.Contains(line, indicator) {
+				hasIndicator = true
+				break
+			}
+		}
+
+		// Keep lines that look like Chinese sentences or contain indicators
+		isChinese := regexp.MustCompile(`[\p{Han}]{3,}`).MatchString(line)
+
+		if hasIndicator || isChinese || len(line) > 20 {
+			cleanedLines = append(cleanedLines, line)
+		}
 	}
 
-	if len(responseLines) == 0 {
-		return fullText, nil // Return full text if filtering removes everything
+	// Join and return
+	result := strings.Join(cleanedLines, "\n")
+
+	// If we filtered too much, return more of the original
+	if len(result) < 50 && len(text) > 100 {
+		log.Println("Cleanup was too aggressive, returning more content")
+		return text
 	}
 
-	return strings.Join(responseLines, "\n"), nil
+	return result
 }
 
 // IsAvailable checks if local OCR is available
