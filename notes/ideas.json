@@ -3,6 +3,13 @@
     "id": "20260201-224542",
     "content": "我要優化model routing",
     "created_at": "2026-02-01T22:45:42.345654-08:00",
-    "status": "DOING"
+    "status": "DOING",
+    "comments": [
+      {
+        "id": "20260201-231029",
+        "content": "研究最佳/最省錢model搭配",
+        "created_at": "2026-02-01T23:10:29.716323-08:00"
+      }
+    ]
   }
 ]
