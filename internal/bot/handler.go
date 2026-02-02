@@ -4,26 +4,32 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/applejobs/telegram-remote-controller/internal/auth"
 	"github.com/applejobs/telegram-remote-controller/internal/command"
 	"github.com/applejobs/telegram-remote-controller/internal/controller"
+	"github.com/applejobs/telegram-remote-controller/internal/gemini"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // MainHandler handles all incoming messages with full functionality
 type MainHandler struct {
-	Bot  *Bot
-	Auth *auth.Whitelist
-	IDE  *controller.IDEController
+	Bot     *Bot
+	Auth    *auth.Whitelist
+	IDE     *controller.IDEController
+	Gemini  *gemini.Client
+	Capture *controller.ResponseCapture
 }
 
 // NewMainHandler creates a new main handler
 func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
 	return &MainHandler{
-		Bot:  bot,
-		Auth: auth.NewWhitelist(allowedUsers),
-		IDE:  controller.NewIDEController(),
+		Bot:     bot,
+		Auth:    auth.NewWhitelist(allowedUsers),
+		IDE:     controller.NewIDEController(),
+		Gemini:  gemini.NewClient(),
+		Capture: controller.NewResponseCapture(),
 	}
 }
 
@@ -59,7 +65,7 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 }
 
-// handleRun executes a prompt in Antigravity
+// handleRun executes a prompt in Antigravity and captures the response
 func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
 		orDefault(cmd.Model, "default"), cmd.Prompt))
@@ -79,7 +85,27 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
 	}
 
-	return h.Bot.SendText(chatID, "✅ 已送出！使用 /screenshot 查看結果")
+	h.Bot.SendText(chatID, "✅ 已送出！等待回應中...")
+
+	// Wait for response and capture
+	// Wait 10 seconds for initial response
+	time.Sleep(10 * time.Second)
+
+	// Take screenshot of the response
+	screenshotPath, err := h.IDE.TakeScreenshot()
+	if err != nil {
+		log.Printf("Failed to capture response: %v", err)
+		return h.Bot.SendText(chatID, "✅ 已送出！請使用 /screenshot 查看結果")
+	}
+
+	// Send the response screenshot
+	h.Bot.SendText(chatID, "📸 回應截圖：")
+	if err := h.Bot.SendPhoto(chatID, screenshotPath); err != nil {
+		log.Printf("Failed to send response screenshot: %v", err)
+		return h.Bot.SendText(chatID, "✅ 已送出！請使用 /screenshot 查看結果")
+	}
+
+	return nil
 }
 
 // handleScreenshot takes and sends a screenshot
@@ -104,13 +130,20 @@ func (h *MainHandler) handleScreenshot(chatID int64) error {
 
 // handleStatus returns system status
 func (h *MainHandler) handleStatus(chatID int64) error {
-	status := `📊 系統狀態
+	geminiStatus := "❌ 未設定 API Key"
+	if h.Gemini.IsAvailable() {
+		geminiStatus = "✅ 可用"
+	}
+
+	status := fmt.Sprintf(`📊 系統狀態
 
 ✅ Bot: 運行中
 ✅ Auth: 已授權
 💻 IDE: Antigravity
+🤖 Gemini 摘要: %s
 
-發送 /screenshot 查看螢幕`
+發送 /screenshot 查看螢幕
+發送 /run <prompt> 執行並等待回應`, geminiStatus)
 
 	return h.Bot.SendText(chatID, status)
 }
