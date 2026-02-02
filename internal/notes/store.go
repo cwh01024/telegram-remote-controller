@@ -19,6 +19,13 @@ const (
 	StatusDone       NoteStatus = "DONE"
 )
 
+// Comment represents a comment on a note
+type Comment struct {
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Note represents a single idea/note
 type Note struct {
 	ID        string     `json:"id"`
@@ -26,6 +33,7 @@ type Note struct {
 	CreatedAt time.Time  `json:"created_at"`
 	Status    NoteStatus `json:"status"`
 	Tags      []string   `json:"tags,omitempty"`
+	Comments  []Comment  `json:"comments,omitempty"`
 }
 
 // Store manages notes persistence
@@ -62,6 +70,7 @@ func (s *Store) Add(content string, tags ...string) Note {
 		CreatedAt: time.Now(),
 		Status:    StatusTodo,
 		Tags:      tags,
+		Comments:  []Comment{},
 	}
 
 	s.notes = append(s.notes, note)
@@ -69,6 +78,28 @@ func (s *Store) Add(content string, tags ...string) Note {
 
 	log.Printf("Added note: %s", note.ID)
 	return note
+}
+
+// AddComment adds a comment to a note
+func (s *Store) AddComment(noteID string, content string) (Comment, bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	comment := Comment{
+		ID:        generateID(),
+		Content:   content,
+		CreatedAt: time.Now(),
+	}
+
+	for i, note := range s.notes {
+		if note.ID == noteID {
+			s.notes[i].Comments = append(s.notes[i].Comments, comment)
+			s.save()
+			log.Printf("Added comment to note %s", noteID)
+			return comment, true
+		}
+	}
+	return Comment{}, false
 }
 
 // UpdateStatus updates the status of a note
