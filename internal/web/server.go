@@ -92,10 +92,11 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Note not found", http.StatusNotFound)
 		}
 
-	case http.MethodPut: // Update status
+	case http.MethodPut: // Update status or content
 		var req struct {
-			ID     string           `json:"id"`
-			Status notes.NoteStatus `json:"status"`
+			ID      string           `json:"id"`
+			Status  notes.NoteStatus `json:"status"`
+			Content string           `json:"content"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -103,10 +104,22 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if s.store.UpdateStatus(req.ID, req.Status) {
+		success := false
+		if req.Status != "" {
+			if s.store.UpdateStatus(req.ID, req.Status) {
+				success = true
+			}
+		}
+		if req.Content != "" {
+			if s.store.UpdateContent(req.ID, req.Content) {
+				success = true
+			}
+		}
+
+		if success {
 			json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		} else {
-			http.Error(w, "Note not found", http.StatusNotFound)
+			http.Error(w, "Note not found or nothing to update", http.StatusNotFound)
 		}
 
 	default:
@@ -117,25 +130,44 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCommentsAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			NoteID  string `json:"note_id"`
+			Content string `json:"content"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if comment, ok := s.store.AddComment(req.NoteID, req.Content); ok {
+			json.NewEncoder(w).Encode(comment)
+		} else {
+			http.Error(w, "Note not found", http.StatusNotFound)
+		}
+
+	case http.MethodPut: // Edit comment
+		var req struct {
+			NoteID    string `json:"note_id"`
+			CommentID string `json:"comment_id"`
+			Content   string `json:"content"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if s.store.UpdateComment(req.NoteID, req.CommentID, req.Content) {
+			json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		} else {
+			http.Error(w, "Comment not found", http.StatusNotFound)
+		}
+
+	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		NoteID  string `json:"note_id"`
-		Content string `json:"content"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if comment, ok := s.store.AddComment(req.NoteID, req.Content); ok {
-		json.NewEncoder(w).Encode(comment)
-	} else {
-		http.Error(w, "Note not found", http.StatusNotFound)
 	}
 }
 
@@ -148,19 +180,14 @@ const homeHTML = `<!DOCTYPE html>
     <style>
         /* Jira Dark Theme Variables */
         :root {
-            --bg-color: #1d2125; /* Jira Dark Body */
-            --column-bg: #161a1d; /* Jira Dark Column */
-            --card-bg: #22272b; /* Jira Dark Card */
-            --text-color: #b6c2cf; /* Jira Dark Text */
+            --bg-color: #1d2125;
+            --column-bg: #161a1d;
+            --card-bg: #22272b;
+            --text-color: #b6c2cf;
             --text-primary: #dcdfe4;
-            --accent-color: #579dff; /* Jira Blue */
-            --border-color: rgba(255, 255, 255, 0.08); /* Subtle borders */
-            
-            --todo-border: #dfe1e6;
-            --doing-border: #0052cc;
-            --done-border: #00875a;
-            
-            --panel-bg: #22272b; /* Side panel matches card bg or slightly different */
+            --accent-color: #579dff;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --panel-bg: #22272b;
         }
         
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -168,32 +195,20 @@ const homeHTML = `<!DOCTYPE html>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background-color: var(--bg-color);
-            background-image: none; /* Removed gradient */
             min-height: 100vh;
             color: var(--text-color);
             padding: 20px;
-            padding-right: 20px; /* Base padding */
-            transition: padding-right 0.3s ease;
+            padding-right: 20px;
             overflow-x: hidden;
         }
 
-        /* Typography */
-        h1 { 
-            font-size: 1.5em; 
-            color: var(--text-primary); 
-            background: none; 
-            -webkit-text-fill-color: initial;
-            font-weight: 600;
-        }
-        
-        header { text-align: left; padding: 20px 40px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
-        
+        h1 { font-size: 1.5em; color: var(--text-primary); font-weight: 600; }
+        header { padding: 20px 40px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
         .sub-header { color: #8c9bab; font-size: 0.9em; margin-top: 4px; }
 
-        /* Board Layout */
         .board { 
             display: grid; 
-            grid-template-columns: repeat(3, 1fr); /* Fixed 3 columns for TODO/DOING/DONE */
+            grid-template-columns: repeat(3, 1fr); 
             gap: 16px; 
             max-width: 1600px; 
             margin: 0 auto; 
@@ -203,7 +218,7 @@ const homeHTML = `<!DOCTYPE html>
         
         .column { 
             background: var(--column-bg); 
-            border-radius: 8px; /* Jira rounded corners */
+            border-radius: 8px; 
             padding: 12px; 
             min-height: 500px; 
             border: 1px solid var(--border-color);
@@ -214,42 +229,34 @@ const homeHTML = `<!DOCTYPE html>
             margin-bottom: 8px; 
             font-weight: 600; 
             font-size: 0.85em; 
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #8c9bab;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: none; /* Jira style headers don't have underline usually, but let's keep it clean */
+            text-transform: uppercase; 
+            color: #8c9bab; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
         }
         
         .badge { 
             background: rgba(255,255,255,0.1); 
-            color: var(--text-primary);
+            color: var(--text-primary); 
             padding: 2px 8px; 
             border-radius: 10px; 
             font-size: 0.9em; 
         }
 
-        /* Cars */
         .note-card {
             background: var(--card-bg); 
-            border-radius: 3px; /* Slightly sharper cards like Jira */
+            border-radius: 3px; 
             padding: 12px; 
             margin-bottom: 8px;
-            border: 1px solid rgba(255,255,255,0.05); /* Very subtle border */
+            border: 1px solid rgba(255,255,255,0.05); 
             box-shadow: 0 1px 2px rgba(0,0,0,0.2);
             cursor: pointer; 
             transition: background 0.1s;
             color: var(--text-primary);
         }
-        .note-card:hover { 
-            background: #2c333a; /* Hover state */
-        }
-        .note-card.active { 
-            box-shadow: 0 0 0 2px var(--accent-color); 
-            background: #2c333a;
-        }
+        .note-card:hover { background: #2c333a; }
+        .note-card.active { box-shadow: 0 0 0 2px var(--accent-color); background: #2c333a; }
         
         .note-content { 
             margin-bottom: 12px; 
@@ -281,21 +288,15 @@ const homeHTML = `<!DOCTYPE html>
             font-family: monospace;
         }
 
-        /* Status colors for cards */
-        /* Jira cards usually don't have left border colors, they use labels. But let's keep the subtle left border for clarity? 
-           Or remove it for cleaner look. Let's remove left border and use maybe an icon or just position. 
-           User liked "Jira-like". Jira cards are simple. */
-        
-        /* Drag styles */
         .dragging { opacity: 0.5; transform: rotate(1deg); }
         .column.drag-over { background: rgba(87, 157, 255, 0.1); border: 1px dashed var(--accent-color); }
 
-        /* Side Panel Styles (Jira-like) */
+        /* Side Panel */
         .side-panel {
             position: fixed;
             top: 0;
             right: 0;
-            width: 600px; /* Wider for detail view */
+            width: 600px; 
             height: 100vh;
             background: var(--panel-bg);
             border-left: 1px solid var(--border-color);
@@ -307,29 +308,12 @@ const homeHTML = `<!DOCTYPE html>
             flex-direction: column;
         }
         
-        .side-panel.open {
-            transform: translateX(0);
-        }
-        
-        /* Overlay for mobile or focus */
-        .panel-overlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.4);
-            z-index: 900;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s;
-        }
-        
-        .panel-overlay.show {
-            opacity: 1;
-            pointer-events: auto;
-        }
+        .side-panel.open { transform: translateX(0); }
+        .panel-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 900; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+        .panel-overlay.show { opacity: 1; pointer-events: auto; }
 
         .panel-header {
             padding: 24px 32px 16px;
-            /* No border bottom in modern Jira detail view usually, just spacing */
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
@@ -341,19 +325,8 @@ const homeHTML = `<!DOCTYPE html>
             padding: 0 32px 32px;
         }
 
-        /* Breadcrumbs / Project ID */
-        .note-breadcrumbs {
-            font-size: 0.9em;
-            color: #8c9bab;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .breadcrumb-link {
-            cursor: pointer;
-        }
+        .note-breadcrumbs { font-size: 0.9em; color: #8c9bab; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .breadcrumb-link { cursor: pointer; }
         .breadcrumb-link:hover { text-decoration: underline; color: var(--accent-color); }
 
         .note-full-content {
@@ -362,124 +335,74 @@ const homeHTML = `<!DOCTYPE html>
             margin-bottom: 40px;
             white-space: pre-wrap;
             color: var(--text-primary);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid transparent;
         }
+        .note-full-content:hover { background: rgba(255,255,255,0.05); }
 
-        .section-title {
-            font-size: 0.85em;
-            font-weight: 700;
+        .editable-textarea {
+            width: 100%;
+            min-height: 150px;
+            background: var(--bg-color);
+            border: 2px solid var(--accent-color);
             color: var(--text-primary);
-            margin-bottom: 16px;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 10px;
+            resize: vertical;
         }
 
-        /* Comments */
-        .comment-list {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            margin-top: 24px;
-        }
-        
-        .comment {
-            display: flex;
-            gap: 12px;
-        }
-        
-        .comment-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #44546f;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            font-weight: bold;
-            color: #1d2125;
-            flex-shrink: 0;
-        }
+        .edit-actions { display: flex; gap: 8px; margin-bottom: 20px; }
 
-        .comment-body {
-            flex: 1;
-        }
+        .section-title { font-size: 0.85em; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
 
-        .comment-header {
-            display: flex;
-            align-items: baseline;
-            gap: 8px;
-            margin-bottom: 4px;
-        }
-        
+        .comment-list { display: flex; flex-direction: column; gap: 20px; margin-top: 24px; }
+        .comment { display: flex; gap: 12px; }
+        .comment-avatar { width: 32px; height: 32px; border-radius: 50%; background: #44546f; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; color: #1d2125; flex-shrink: 0; }
+        .comment-body { flex: 1; }
+        .comment-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
         .comment-author { font-weight: 600; color: var(--text-primary); font-size: 0.95em; }
         .comment-date { color: #8c9bab; font-size: 0.85em; }
-        .comment-text { color: var(--text-color); line-height: 1.5; font-size: 0.95em; white-space: pre-wrap; }
+        
+        .comment-text { 
+            color: var(--text-color); 
+            line-height: 1.5; 
+            font-size: 0.95em; 
+            white-space: pre-wrap;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }
+        .comment-text:hover { background: rgba(255,255,255,0.05); }
 
         .comment-input-wrapper {
             margin-top: 8px;
             border: 1px solid var(--border-color);
-            background: var(--bg-color); /* Slightly lighter/darker input bg */
+            background: var(--bg-color);
             border-radius: 3px;
             transition: box-shadow 0.2s;
         }
-        .comment-input-wrapper:focus-within {
-            box-shadow: 0 0 0 1px var(--accent-color);
-            border-color: var(--accent-color);
-        }
-        
-        .comment-input {
-            width: 100%;
-            background: transparent;
-            border: none;
-            color: var(--text-primary);
-            min-height: 40px;
-            padding: 12px;
-            resize: vertical;
-            font-family: inherit;
-            display: block;
-        }
+        .comment-input-wrapper:focus-within { box-shadow: 0 0 0 1px var(--accent-color); border-color: var(--accent-color); }
+        .comment-input { width: 100%; background: transparent; border: none; color: var(--text-primary); min-height: 40px; padding: 12px; resize: vertical; font-family: inherit; display: block; }
         .comment-input:focus { outline: none; }
-        
-        .comment-actions {
-            padding: 8px 12px;
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-            background: rgba(0,0,0,0.2); /* Footer of input */
-        }
+        .comment-actions { padding: 8px 12px; display: flex; justify-content: flex-end; gap: 8px; background: rgba(0,0,0,0.2); }
 
-        /* Status Select (Jira Style Dropdown) */
-        .status-badge-select {
-            appearance: none;
-            background-color: var(--bg-color);
-            border: 1px solid transparent;
-            color: var(--text-primary);
-            padding: 6px 12px;
-            border-radius: 3px;
-            font-weight: 600;
-            font-size: 0.85em;
-            cursor: pointer;
-            text-transform: uppercase;
-            transition: background 0.1s;
-        }
+        .status-badge-select { appearance: none; background-color: var(--bg-color); border: 1px solid transparent; color: var(--text-primary); padding: 6px 12px; border-radius: 3px; font-weight: 600; font-size: 0.85em; cursor: pointer; text-transform: uppercase; transition: background 0.1s; }
         .status-badge-select:hover { background-color: rgba(255,255,255,0.05); }
         .status-badge-select option { background-color: var(--panel-bg); color: var(--text-color); }
-        
-        /* Specific status colors for the dropdown button itself via JS/CSS mapping? 
-           For simplicity, just bold text. */
         
         .btn-icon { background: none; border: none; font-size: 1.5em; color: #8c9bab; cursor: pointer; padding: 4px; border-radius: 3px; }
         .btn-icon:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
         
-        .btn-primary { 
-            background: var(--accent-color); 
-            color: #1d2125; /* Dark text on bright blue */
-            border: none; 
-            padding: 6px 12px; 
-            border-radius: 3px; 
-            font-weight: 600; 
-            cursor: pointer; 
-            font-size: 0.9em;
-        }
+        .btn-primary { background: var(--accent-color); color: #1d2125; border: none; padding: 6px 12px; border-radius: 3px; font-weight: 600; cursor: pointer; font-size: 0.9em; }
         .btn-primary:hover { filter: brightness(1.1); }
+        .btn-secondary { background: rgba(255,255,255,0.1); color: var(--text-primary); border: none; padding: 6px 12px; border-radius: 3px; font-weight: 600; cursor: pointer; font-size: 0.9em; }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
 
         @media (max-width: 1024px) { 
             .board { grid-template-columns: 1fr; } 
@@ -495,7 +418,7 @@ const homeHTML = `<!DOCTYPE html>
             <div class="sub-header">All project updates</div>
         </div>
         <div style="font-size:0.9em; color:#8c9bab;">
-            Drag to update • Click to view
+            Drag to update • Click to view • Click text to edit
         </div>
     </header>
     
@@ -527,10 +450,8 @@ const homeHTML = `<!DOCTYPE html>
         {{end}}
     </div>
 
-    <!-- Overlay -->
     <div class="panel-overlay" id="panelOverlay" onclick="closePanel()"></div>
 
-    <!-- Side Panel -->
     <div class="side-panel" id="sidePanel">
         <div class="panel-header">
             <div class="note-breadcrumbs">
@@ -552,16 +473,11 @@ const homeHTML = `<!DOCTYPE html>
         </div>
         
         <div class="panel-content">
-            <div id="panelContent" class="note-full-content"></div>
+            <div id="descriptionContainer">
+                <div id="panelContent" class="note-full-content" onclick="editDescription()" title="Click to edit"></div>
+            </div>
             
-            <div class="section-title">Description</div>
-            <div style="color:#8c9bab; font-size:0.9em; margin-bottom: 30px;">
-                (No detailed description provided. Use the content above.)
-            </div>
-
-            <div class="section-title">
-                Activity
-            </div>
+            <div class="section-title">Activity</div>
             
             <div style="display:flex; gap: 12px;">
                 <div class="comment-avatar">U</div>
@@ -576,9 +492,7 @@ const homeHTML = `<!DOCTYPE html>
                 </div>
             </div>
 
-            <div id="panelComments" class="comment-list">
-                <!-- Comments injected -->
-            </div>
+            <div id="panelComments" class="comment-list"></div>
         </div>
     </div>
 
@@ -592,7 +506,7 @@ const homeHTML = `<!DOCTYPE html>
 
         let currentNoteId = null;
 
-        // Drag & Drop
+        // --- Drag & Drop ---
         function allowDrop(ev) { ev.preventDefault(); ev.currentTarget.classList.add('drag-over'); }
         function drag(ev) { ev.dataTransfer.setData("text", ev.target.id); ev.target.classList.add('dragging'); }
         function drop(ev, status) {
@@ -611,6 +525,7 @@ const homeHTML = `<!DOCTYPE html>
         }
         document.querySelectorAll('.column').forEach(col => col.addEventListener('dragleave', () => col.classList.remove('drag-over')));
 
+        // --- API Calls ---
         async function updateStatus(id, status) {
             await fetch('/api/notes', {
                 method: 'PUT',
@@ -618,25 +533,49 @@ const homeHTML = `<!DOCTYPE html>
                 body: JSON.stringify({ id: id, status: status })
             });
             if (notesData[id]) notesData[id].status = status;
-            
-            if (currentNoteId === id) {
-                 document.getElementById('panelStatus').value = status;
-            }
+            if (currentNoteId === id) document.getElementById('panelStatus').value = status;
         }
 
-        // Panel Logic
+        async function updateContent(id, content) {
+            await fetch('/api/notes', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, content: content })
+            });
+            if (notesData[id]) notesData[id].content = content;
+            
+            // Update UI
+            document.getElementById('panelContent').textContent = content;
+            // Also update card in board
+            const cardContent = document.querySelector('#' + id + ' .note-content');
+            if (cardContent) cardContent.textContent = content;
+        }
+
+        async function updateComment(noteId, commentId, content) {
+            await fetch('/api/notes/comments', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note_id: noteId, comment_id: commentId, content: content })
+            });
+            
+            // Update local data
+            const note = notesData[noteId];
+            const comment = note.comments.find(c => c.id === commentId);
+            if (comment) comment.content = content;
+            
+            renderComments(note.comments);
+        }
+
+        // --- Panel Logic ---
         function openPanel(id) {
             if (event && event.type !== 'click') return;
-            
             const note = notesData[id];
             if (!note) return;
             
             currentNoteId = id;
-            
             document.querySelectorAll('.note-card').forEach(c => c.classList.remove('active'));
             document.getElementById(id).classList.add('active');
 
-            // ID Formatting
             document.getElementById('panelId').textContent = 'IDEA-' + note.id.substring(0,4); 
             document.getElementById('panelContent').textContent = note.content;
             document.getElementById('panelStatus').value = note.status;
@@ -652,18 +591,26 @@ const homeHTML = `<!DOCTYPE html>
             document.getElementById('panelOverlay').classList.remove('show');
             document.querySelectorAll('.note-card').forEach(c => c.classList.remove('active'));
             currentNoteId = null;
+            // Revert any open edits
+            const descContainer = document.getElementById('descriptionContainer');
+            if (descContainer.querySelector('textarea')) {
+                // If editing, reverting to view is handled by next openPanel, but safer to clean:
+                descContainer.innerHTML = '<div id="panelContent" class="note-full-content" onclick="editDescription()" title="Click to edit"></div>';
+            }
         }
 
+        // --- Comment Logic ---
         function renderComments(comments) {
             const container = document.getElementById('panelComments');
             container.innerHTML = '';
-            
-            const sorted = comments.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+            const sorted = (comments || []).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
 
             sorted.forEach(c => {
                 const div = document.createElement('div');
                 div.className = 'comment';
+                div.id = 'comment-' + c.id;
                 const date = new Date(c.created_at).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+                
                 div.innerHTML = 
                     '<div class="comment-avatar">U</div>' +
                     '<div class="comment-body">' +
@@ -671,7 +618,7 @@ const homeHTML = `<!DOCTYPE html>
                             '<span class="comment-author">User</span>' +
                             '<span class="comment-date">' + date + '</span>' +
                         '</div>' +
-                        '<div class="comment-text">' + escapeHtml(c.content) + '</div>' +
+                        '<div class="comment-text" onclick="editComment(\'' + c.id + '\')" title="Click to edit">' + escapeHtml(c.content) + '</div>' +
                     '</div>';
                 container.appendChild(div);
             });
@@ -696,32 +643,82 @@ const homeHTML = `<!DOCTYPE html>
                 renderComments(notesData[currentNoteId].comments);
                 input.value = '';
             } catch (err) {
-                alert('In demo mode / Failed to add comment');
-            }
-        }
-        
-        function handleCommentKeydown(e) {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                addComment();
+                alert('Failed to add comment');
             }
         }
 
+        // --- Editing Logic ---
+        function editDescription() {
+            const container = document.getElementById('descriptionContainer');
+            const contentDiv = document.getElementById('panelContent');
+            const currentText = contentDiv.textContent;
+            
+            container.innerHTML = 
+                '<textarea id="editDescriptionInput" class="editable-textarea">' + escapeHtml(currentText) + '</textarea>' +
+                '<div class="edit-actions">' +
+                    '<button class="btn-primary" onclick="saveDescription()">Save</button>' +
+                    '<button class="btn-secondary" onclick="cancelDescription(\'' + escapeJs(currentText) + '\')">Cancel</button>' +
+                '</div>';
+            
+            document.getElementById('editDescriptionInput').focus();
+        }
+
+        function saveDescription() {
+            const newText = document.getElementById('editDescriptionInput').value;
+            updateContent(currentNoteId, newText);
+            // Restore UI
+            const container = document.getElementById('descriptionContainer');
+            container.innerHTML = '<div id="panelContent" class="note-full-content" onclick="editDescription()" title="Click to edit">' + escapeHtml(newText) + '</div>';
+        }
+
+        function cancelDescription(originalText) {
+            const container = document.getElementById('descriptionContainer');
+            container.innerHTML = '<div id="panelContent" class="note-full-content" onclick="editDescription()" title="Click to edit">' + escapeHtml(originalText) + '</div>';
+        }
+
+        function editComment(commentId) {
+            const commentDiv = document.getElementById('comment-' + commentId);
+            const textDiv = commentDiv.querySelector('.comment-text');
+            const currentText = textDiv.textContent;
+            
+            // Replace text div with input
+            textDiv.parentNode.innerHTML += 
+                '<div class="comment-edit-area" style="margin-top:8px;">' +
+                    '<textarea class="editable-textarea" style="min-height:80px;">' + escapeHtml(currentText) + '</textarea>' +
+                    '<div class="edit-actions">' +
+                        '<button class="btn-primary" onclick="saveComment(\'' + commentId + '\', this)">Save</button>' +
+                        '<button class="btn-secondary" onclick="renderComments(notesData[\'' + currentNoteId + '\'].comments)">Cancel</button>' +
+                    '</div>' +
+                '</div>';
+            
+            textDiv.style.display = 'none';
+            commentDiv.querySelector('textarea').focus();
+        }
+
+        function saveComment(commentId, btn) {
+            const textarea = btn.parentNode.parentNode.querySelector('textarea');
+            const newContent = textarea.value;
+            updateComment(currentNoteId, commentId, newContent);
+        }
+
+        // --- Helpers ---
+        function handleCommentKeydown(e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addComment(); }
         async function updateNoteStatusFromPanel() {
             const status = document.getElementById('panelStatus').value;
             if (!currentNoteId) return;
-            
             await updateStatus(currentNoteId, status);
-            
             const card = document.getElementById(currentNoteId);
             const col = document.getElementById(status + '-col');
             col.appendChild(card);
             card.setAttribute('data-status', status);
         }
-
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+        function escapeJs(text) {
+            return text.replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '');
         }
         
         document.addEventListener('keydown', (e) => {

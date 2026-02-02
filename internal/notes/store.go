@@ -118,6 +118,42 @@ func (s *Store) UpdateStatus(id string, status NoteStatus) bool {
 	return false
 }
 
+// UpdateContent updates the content of a note
+func (s *Store) UpdateContent(id string, content string) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for i, note := range s.notes {
+		if note.ID == id {
+			s.notes[i].Content = content
+			s.save()
+			log.Printf("Updated note %s content", id)
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateComment updates a comment on a note
+func (s *Store) UpdateComment(noteID string, commentID string, content string) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for i, note := range s.notes {
+		if note.ID == noteID {
+			for j, comment := range note.Comments {
+				if comment.ID == commentID {
+					s.notes[i].Comments[j].Content = content
+					s.save()
+					log.Printf("Updated comment %s on note %s", commentID, noteID)
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // GetAll returns all notes sorted by creation time (newest first)
 func (s *Store) GetAll() []Note {
 	s.mutex.RLock()
