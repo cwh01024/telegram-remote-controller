@@ -518,7 +518,7 @@ const homeHTML = `<!DOCTYPE html>
                  data-status="{{.Status}}">
                 <div class="note-content">{{.Content}}</div>
                 <div class="note-meta">
-                    <span class="note-id">IDEA-{{.ID | slice 0 4 }}</span>
+                    <span class="note-id">IDEA-{{printf "%.4s" .ID}}</span>
                     <span>{{.CreatedAt.Format "Jan 02"}}</span>
                 </div>
             </div>
