@@ -54,8 +54,22 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		grouped[status] = append(grouped[status], note)
 	}
 
+	notesJSON, err := json.Marshal(notesList)
+	if err != nil {
+		log.Printf("Error marshaling notes: %v", err)
+		notesJSON = []byte("[]")
+	}
+
+	data := struct {
+		Columns      map[string][]notes.Note
+		AllNotesJSON template.JS
+	}{
+		Columns:      grouped,
+		AllNotesJSON: template.JS(notesJSON),
+	}
+
 	tmpl := template.Must(template.New("home").Parse(homeHTML))
-	if err := tmpl.Execute(w, grouped); err != nil {
+	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -364,7 +378,7 @@ const homeHTML = `<!DOCTYPE html>
     </header>
     
     <div class="board">
-        {{range $status, $notes := .}}
+        {{range $status, $notes := .Columns}}
         <div class="column" id="{{$status}}-col" 
              ondrop="drop(event, '{{$status}}')" 
              ondragover="allowDrop(event)">
@@ -433,12 +447,11 @@ const homeHTML = `<!DOCTYPE html>
 
     <script>
         // Store notes data for access
+        const allNotesList = {{.AllNotesJSON}};
         const notesData = {};
-        {{range $status, $notes := .}}
-            {{range $notes}}
-            notesData["{{.ID}}"] = {{.}};
-            {{end}}
-        {{end}}
+        if (allNotesList) {
+            allNotesList.forEach(n => notesData[n.id] = n);
+        }
 
         let currentNoteId = null;
 
