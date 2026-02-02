@@ -10,12 +10,22 @@ import (
 	"time"
 )
 
+// NoteStatus represents the status of a note
+type NoteStatus string
+
+const (
+	StatusTodo       NoteStatus = "TODO"
+	StatusInProgress NoteStatus = "DOING"
+	StatusDone       NoteStatus = "DONE"
+)
+
 // Note represents a single idea/note
 type Note struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
-	Tags      []string  `json:"tags,omitempty"`
+	ID        string     `json:"id"`
+	Content   string     `json:"content"`
+	CreatedAt time.Time  `json:"created_at"`
+	Status    NoteStatus `json:"status"`
+	Tags      []string   `json:"tags,omitempty"`
 }
 
 // Store manages notes persistence
@@ -50,6 +60,7 @@ func (s *Store) Add(content string, tags ...string) Note {
 		ID:        generateID(),
 		Content:   content,
 		CreatedAt: time.Now(),
+		Status:    StatusTodo,
 		Tags:      tags,
 	}
 
@@ -58,6 +69,22 @@ func (s *Store) Add(content string, tags ...string) Note {
 
 	log.Printf("Added note: %s", note.ID)
 	return note
+}
+
+// UpdateStatus updates the status of a note
+func (s *Store) UpdateStatus(id string, status NoteStatus) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for i, note := range s.notes {
+		if note.ID == id {
+			s.notes[i].Status = status
+			s.save()
+			log.Printf("Updated note %s status to %s", id, status)
+			return true
+		}
+	}
+	return false
 }
 
 // GetAll returns all notes sorted by creation time (newest first)
