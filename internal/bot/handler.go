@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/applejobs/telegram-remote-controller/internal/auth"
 	"github.com/applejobs/telegram-remote-controller/internal/command"
@@ -65,7 +64,7 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 }
 
-// handleRun executes a prompt in Antigravity and captures the response
+// handleRun executes a prompt in Antigravity
 func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
 		orDefault(cmd.Model, "default"), cmd.Prompt))
@@ -85,27 +84,7 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
 	}
 
-	h.Bot.SendText(chatID, "✅ 已送出！等待回應中...")
-
-	// Wait for response and capture
-	// Wait 10 seconds for initial response
-	time.Sleep(10 * time.Second)
-
-	// Take screenshot of the response
-	screenshotPath, err := h.IDE.TakeScreenshot()
-	if err != nil {
-		log.Printf("Failed to capture response: %v", err)
-		return h.Bot.SendText(chatID, "✅ 已送出！請使用 /screenshot 查看結果")
-	}
-
-	// Send the response screenshot
-	h.Bot.SendText(chatID, "📸 回應截圖：")
-	if err := h.Bot.SendPhoto(chatID, screenshotPath); err != nil {
-		log.Printf("Failed to send response screenshot: %v", err)
-		return h.Bot.SendText(chatID, "✅ 已送出！請使用 /screenshot 查看結果")
-	}
-
-	return nil
+	return h.Bot.SendText(chatID, "✅ 已送出！使用 /screenshot 查看結果")
 }
 
 // handleScreenshot takes and sends a screenshot of the specified app
