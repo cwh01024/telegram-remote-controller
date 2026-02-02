@@ -506,19 +506,17 @@ const homeHTML = `<!DOCTYPE html>
             document.getElementById(id).classList.add('active');
 
             // Populate Panel
-            document.getElementById('panelId').textContent = 'TEST-' + note.ID.split('-')[1]; // Simulate Jira ID
-            document.getElementById('panelDate').textContent = new Date(note.CreatedAt).toLocaleString();
-            document.getElementById('panelContent').textContent = note.Content;
-            document.getElementById('panelStatus').value = note.Status;
+            // Note: JSON keys are lowercase from Go struct tags
+            document.getElementById('panelId').textContent = 'TEST-' + note.id.split('-')[1]; 
+            document.getElementById('panelDate').textContent = new Date(note.created_at).toLocaleString();
+            document.getElementById('panelContent').textContent = note.content;
+            document.getElementById('panelStatus').value = note.status;
             
-            renderComments(note.Comments || []);
+            renderComments(note.comments || []);
             
             // Show Panel
             document.getElementById('sidePanel').classList.add('open');
             document.getElementById('panelOverlay').classList.add('show');
-            
-            // Adjust body size? Optional: for split view feel
-            // document.body.style.paddingRight = '450px';
         }
 
         function closePanel() {
