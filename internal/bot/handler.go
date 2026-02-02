@@ -12,30 +12,38 @@ import (
 	"github.com/applejobs/telegram-remote-controller/internal/auth"
 	"github.com/applejobs/telegram-remote-controller/internal/command"
 	"github.com/applejobs/telegram-remote-controller/internal/controller"
+	"github.com/applejobs/telegram-remote-controller/internal/notes"
+	"github.com/applejobs/telegram-remote-controller/internal/web"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // MainHandler handles all incoming messages with full functionality
 type MainHandler struct {
-	Bot     *Bot
-	Auth    *auth.Whitelist
-	IDE     *controller.IDEController
-	Watcher *controller.FileWatcher
+	Bot       *Bot
+	Auth      *auth.Whitelist
+	IDE       *controller.IDEController
+	Watcher   *controller.FileWatcher
+	NoteStore *notes.Store
+	WebServer *web.Server
 
 	// Response watching state
 	watchingMutex sync.Mutex
-	isWatching    bool
 	watchChatID   int64
-	stopWatch     chan struct{}
 }
 
 // NewMainHandler creates a new main handler
 func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
+	// Initialize components
+	noteStore := notes.NewStore()
+	webServer := web.NewServer(noteStore, 8080)
+
 	h := &MainHandler{
-		Bot:     bot,
-		Auth:    auth.NewWhitelist(allowedUsers),
-		IDE:     controller.NewIDEController(),
-		Watcher: controller.NewFileWatcher(),
+		Bot:       bot,
+		Auth:      auth.NewWhitelist(allowedUsers),
+		IDE:       controller.NewIDEController(),
+		Watcher:   controller.NewFileWatcher(),
+		NoteStore: noteStore,
+		WebServer: webServer,
 	}
 
 	// Set default watch chat ID to first allowed user
@@ -46,6 +54,13 @@ func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
 
 	// Start background file watcher
 	go h.backgroundWatcher()
+
+	// Start Web UI
+	go func() {
+		if err := h.WebServer.Start(); err != nil {
+			log.Printf("Web server failed: %v", err)
+		}
+	}()
 
 	return h
 }
@@ -155,6 +170,8 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		return h.handleRun(chatID, cmd)
 	case command.CmdScreenshot:
 		return h.handleScreenshot(chatID, cmd.AppName)
+	case command.CmdNotes:
+		return h.handleNotes(chatID, cmd)
 	case command.CmdStatus:
 		return h.handleStatus(chatID)
 	case command.CmdHelp:
@@ -181,6 +198,25 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 %s/response.md
 
 Bot 會自動偵測並發送回應給你。`, cmd.Prompt, responseDir))
+}
+
+// handleNotes adds a note or shows the web UI link
+func (h *MainHandler) handleNotes(chatID int64, cmd *command.Command) error {
+	if cmd.Prompt == "" {
+		// No content, show Web UI info
+		count := h.NoteStore.Count()
+		return h.Bot.SendText(chatID, fmt.Sprintf(`💡 Ideas / Notes
+
+📝 目前筆記： %d 則
+🌐 Web UI: http://localhost:8080
+
+使用方式：
+/notes <你的想法> - 新增一則筆記`, count))
+	}
+
+	// Add note
+	note := h.NoteStore.Add(cmd.Prompt)
+	return h.Bot.SendText(chatID, fmt.Sprintf("✅ Idea 已保存！\nID: %s\n\n可在 Web UI 查看。", note.ID))
 }
 
 // handleScreenshot takes and sends a screenshot of the specified app
@@ -223,6 +259,9 @@ func (h *MainHandler) handleStatus(chatID int64) error {
 	files, _ := filepath.Glob(filepath.Join(responseDir, "*"))
 	fileCount := len(files)
 
+	// Notes count
+	notesCount := h.NoteStore.Count()
+
 	h.watchingMutex.Lock()
 	watchingChat := h.watchChatID
 	h.watchingMutex.Unlock()
@@ -231,18 +270,15 @@ func (h *MainHandler) handleStatus(chatID int64) error {
 
 ✅ Bot: 運行中
 ✅ 背景監聽: 已啟動
+🌐 Web UI: http://localhost:8080
 📁 回應目錄: %s
    狀態: %s
    檔案數: %d
+💡 筆記數: %d
 💬 當前 Chat ID: %d
 
-📝 使用流程:
-1. 發送 /run <問題>
-2. 在 Antigravity 執行 prompt
-3. 回應完成後保存到回應目錄
-4. Bot 自動偵測並發送
-
-📸 /screenshot <app> 截取指定應用程式`, responseDir, dirExists, fileCount, watchingChat)
+📝 /run <問題> - 執行 prompt
+💡 /notes <想法> - 記錄 idea`, responseDir, dirExists, fileCount, notesCount, watchingChat)
 
 	return h.Bot.SendText(chatID, status)
 }

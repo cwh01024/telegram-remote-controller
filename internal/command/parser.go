@@ -11,6 +11,7 @@ const (
 	CmdStatus     = "status"
 	CmdScreenshot = "screenshot"
 	CmdHelp       = "help"
+	CmdNotes      = "notes"
 )
 
 // Model aliases
@@ -96,6 +97,8 @@ func Parse(input string) (*Command, error) {
 		return &Command{Name: CmdStatus}, nil
 	case CmdScreenshot:
 		return parseScreenshotCommand(rest)
+	case CmdNotes:
+		return parseNotesCommand(rest)
 	case CmdHelp:
 		return &Command{Name: CmdHelp}, nil
 	default:
@@ -181,6 +184,14 @@ func expandAppAlias(alias string) string {
 	return alias
 }
 
+// parseNotesCommand parses a /notes command
+func parseNotesCommand(rest string) (*Command, error) {
+	return &Command{
+		Name:   CmdNotes,
+		Prompt: strings.TrimSpace(rest), // The note content
+	}, nil
+}
+
 // HelpText returns the help message
 func HelpText() string {
 	return `🤖 可用指令：
@@ -188,6 +199,10 @@ func HelpText() string {
 📝 執行 Prompt：
 /run <prompt> - 使用預設 model
 /run -m <model> <prompt> - 指定 model
+
+💡 Ideas/Notes：
+/notes <idea> - 新增 idea
+/notes - 查看 Web UI 連結
 
 🎯 Model 別名：
 • thinking / opus → Claude Opus 4.5 (Thinking)
