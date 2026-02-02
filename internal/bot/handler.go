@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/applejobs/telegram-remote-controller/internal/auth"
@@ -20,16 +21,110 @@ type MainHandler struct {
 	Auth    *auth.Whitelist
 	IDE     *controller.IDEController
 	Watcher *controller.FileWatcher
+
+	// Response watching state
+	watchingMutex sync.Mutex
+	isWatching    bool
+	watchChatID   int64
+	stopWatch     chan struct{}
 }
 
 // NewMainHandler creates a new main handler
 func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
-	return &MainHandler{
+	h := &MainHandler{
 		Bot:     bot,
 		Auth:    auth.NewWhitelist(allowedUsers),
 		IDE:     controller.NewIDEController(),
 		Watcher: controller.NewFileWatcher(),
 	}
+
+	// Set default watch chat ID to first allowed user
+	if len(allowedUsers) > 0 {
+		h.watchChatID = allowedUsers[0]
+		log.Printf("Default chat ID set to: %d", h.watchChatID)
+	}
+
+	// Start background file watcher
+	go h.backgroundWatcher()
+
+	return h
+}
+
+// backgroundWatcher continuously monitors for new response files
+func (h *MainHandler) backgroundWatcher() {
+	responseDir := h.Watcher.GetWatchDir()
+	log.Printf("Background watcher started, monitoring: %s", responseDir)
+
+	// Get initial file state
+	initialFiles := h.getFileStates(responseDir)
+
+	for {
+		time.Sleep(2 * time.Second)
+
+		// Get current file state
+		currentFiles := h.getFileStates(responseDir)
+
+		// Check for new or modified files
+		for path, modTime := range currentFiles {
+			oldModTime, exists := initialFiles[path]
+
+			// New file or modified file
+			if !exists || modTime.After(oldModTime) {
+				log.Printf("Detected file change: %s", path)
+
+				// Wait for file to be fully written
+				time.Sleep(2 * time.Second)
+
+				// Read content
+				content, err := os.ReadFile(path)
+				if err != nil {
+					log.Printf("Failed to read file: %v", err)
+					continue
+				}
+
+				// Get the watching chat ID
+				h.watchingMutex.Lock()
+				chatID := h.watchChatID
+				h.watchingMutex.Unlock()
+
+				if chatID != 0 {
+					// Format and send
+					formatted := h.Watcher.FormatResponseForTelegram(string(content))
+					h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s", formatted))
+					log.Printf("Sent response to chat %d (%d chars)", chatID, len(formatted))
+				} else {
+					log.Println("No active chat to send response to")
+				}
+
+				// Update file state
+				initialFiles[path] = modTime
+			}
+		}
+
+		// Update initial files with any new files
+		for path, modTime := range currentFiles {
+			initialFiles[path] = modTime
+		}
+	}
+}
+
+// getFileStates returns modification times for all files in a directory
+func (h *MainHandler) getFileStates(dir string) map[string]time.Time {
+	states := make(map[string]time.Time)
+
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Only watch text/markdown files
+		ext := filepath.Ext(path)
+		if ext == ".txt" || ext == ".md" {
+			states[path] = info.ModTime()
+		}
+		return nil
+	})
+
+	return states
 }
 
 // HandleMessage processes incoming messages
@@ -42,6 +137,11 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		log.Printf("Unauthorized access from user %d", userID)
 		return h.Bot.SendText(chatID, "⛔ 你沒有使用權限")
 	}
+
+	// Update watching chat ID (so responses go to the right chat)
+	h.watchingMutex.Lock()
+	h.watchChatID = chatID
+	h.watchingMutex.Unlock()
 
 	// Parse command
 	cmd, err := command.Parse(msg.Text)
@@ -64,45 +164,23 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 }
 
-// handleRun executes a prompt in Antigravity and watches for response file
+// handleRun shows the prompt and waits for response file
 func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
-	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
-		orDefault(cmd.Model, "default"), cmd.Prompt))
-
-	// Record time before submission
-	startTime := time.Now()
-
-	// Ensure IDE is ready
-	if err := h.IDE.EnsureReady(); err != nil {
-		return h.Bot.SendText(chatID, fmt.Sprintf("❌ IDE 未就緒: %v", err))
-	}
-
-	// Input the prompt
-	if err := h.IDE.InputPrompt(cmd.Prompt); err != nil {
-		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 輸入失敗: %v", err))
-	}
-
-	// Submit
-	if err := h.IDE.Submit(); err != nil {
-		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
-	}
-
 	responseDir := h.Watcher.GetWatchDir()
-	h.Bot.SendText(chatID, fmt.Sprintf("✅ 已送出！\n\n監聽回應目錄: %s\n\n將回應寫入上述目錄的 .txt 或 .md 檔案即可收到通知。", responseDir))
 
-	// Clean up old response files
+	// Clean up old files
 	h.Watcher.CleanupOldFiles(1 * time.Hour)
 
-	// Wait for response file
-	content, err := h.Watcher.WaitForLatestResponse(startTime)
-	if err != nil {
-		log.Printf("File watcher timed out: %v", err)
-		return h.Bot.SendText(chatID, "⏱️ 等待回應檔案超時（3分鐘）。\n\n請將回應寫入: "+responseDir)
-	}
+	// Show the prompt to user and explain the process
+	return h.Bot.SendText(chatID, fmt.Sprintf(`🚀 收到 Prompt:
+%s
 
-	// Format and send response
-	formatted := h.Watcher.FormatResponseForTelegram(content)
-	return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s", formatted))
+📋 請在 Antigravity 執行此 Prompt
+
+✅ 回應完成後，將回應保存到:
+%s/response.md
+
+Bot 會自動偵測並發送回應給你。`, cmd.Prompt, responseDir))
 }
 
 // handleScreenshot takes and sends a screenshot of the specified app
@@ -145,21 +223,26 @@ func (h *MainHandler) handleStatus(chatID int64) error {
 	files, _ := filepath.Glob(filepath.Join(responseDir, "*"))
 	fileCount := len(files)
 
+	h.watchingMutex.Lock()
+	watchingChat := h.watchChatID
+	h.watchingMutex.Unlock()
+
 	status := fmt.Sprintf(`📊 系統狀態
 
 ✅ Bot: 運行中
-✅ Auth: 已授權
-💻 IDE: Antigravity
+✅ 背景監聽: 已啟動
 📁 回應目錄: %s
    狀態: %s
    檔案數: %d
+💬 當前 Chat ID: %d
 
-📝 使用方式:
+📝 使用流程:
 1. 發送 /run <問題>
-2. Antigravity 回應後，將內容保存到回應目錄
-3. Bot 自動偵測並發送給你
+2. 在 Antigravity 執行 prompt
+3. 回應完成後保存到回應目錄
+4. Bot 自動偵測並發送
 
-📸 /screenshot <app> 截取指定應用程式`, responseDir, dirExists, fileCount)
+📸 /screenshot <app> 截取指定應用程式`, responseDir, dirExists, fileCount, watchingChat)
 
 	return h.Bot.SendText(chatID, status)
 }
