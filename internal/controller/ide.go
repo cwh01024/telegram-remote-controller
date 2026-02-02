@@ -120,11 +120,38 @@ func (c *IDEController) ClearInput() error {
 
 // TakeScreenshot takes a screenshot of the current state
 func (c *IDEController) TakeScreenshot() (string, error) {
-	// Focus Antigravity first
-	automation.OpenApp(c.appName)
+	log.Println("=== TAKING SCREENSHOT ===")
+
+	// Focus Antigravity multiple times to ensure it's in front
+	log.Printf("Focusing %s...", c.appName)
+
+	// First activation
+	if err := automation.OpenApp(c.appName); err != nil {
+		log.Printf("Warning: first focus attempt failed: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Second activation to be sure
+	if err := automation.OpenApp(c.appName); err != nil {
+		log.Printf("Warning: second focus attempt failed: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Use AppleScript to ensure window is frontmost
+	script := fmt.Sprintf(`
+		tell application "%s"
+			activate
+			set frontmost to true
+		end tell
+		delay 0.3
+	`, c.appName)
+	_, _ = automation.RunScript(script)
+
 	time.Sleep(300 * time.Millisecond)
 
-	// Try to capture the Antigravity window, fallback to full screen
+	log.Println("Focus complete, taking screenshot...")
+
+	// Take the screenshot
 	return c.screenshot.CaptureScreen()
 }
 

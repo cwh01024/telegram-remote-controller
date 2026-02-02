@@ -18,59 +18,83 @@ type Screenshot struct {
 
 // NewScreenshot creates a new Screenshot instance
 func NewScreenshot() *Screenshot {
+	// Use absolute path for screenshots directory
+	dir := "/Users/applejobs/.gemini/antigravity/scratch/telegram-agent-controller/screenshots"
+
+	// Ensure directory exists
+	os.MkdirAll(dir, 0755)
+
 	return &Screenshot{
-		outputDir: "/tmp",
+		outputDir: dir,
 	}
 }
 
-// CaptureScreen captures the screen using Shift+Cmd+3 shortcut
-// This saves to Desktop by default, then we move it
+// CaptureScreen captures the screen using Cmd+Shift+3 keyboard shortcut
 func (s *Screenshot) CaptureScreen() (string, error) {
-	log.Println("Taking screenshot with Shift+Cmd+3...")
+	log.Println("=== SCREENSHOT START ===")
 
-	// Get desktop path
+	// Get the user's home directory for Desktop path
 	homeDir, _ := os.UserHomeDir()
 	desktopPath := filepath.Join(homeDir, "Desktop")
 
-	// Get existing screenshots before taking new one
-	existingFiles := s.getScreenshotFiles(desktopPath)
+	// Record existing screenshot files before taking new one
+	existingFiles := s.getDesktopScreenshots(desktopPath)
+	log.Printf("Found %d existing screenshots on Desktop", len(existingFiles))
 
-	// Simulate Shift+Cmd+3 using AppleScript
+	// Use AppleScript to press Cmd+Shift+3
+	log.Println("Pressing Cmd+Shift+3...")
 	script := `
 		tell application "System Events"
 			key code 20 using {command down, shift down}
 		end tell
 	`
 	cmd := exec.Command("osascript", "-e", script)
-	if err := cmd.Run(); err != nil {
-		log.Printf("Shift+Cmd+3 failed: %v, falling back to screencapture", err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Cmd+Shift+3 failed: %v, output: %s", err, string(output))
+		// Fall back to screencapture
 		return s.fallbackCapture()
 	}
 
-	// Wait for screenshot to be saved
-	time.Sleep(1 * time.Second)
+	// Wait for screenshot to be saved (macOS saves to Desktop)
+	log.Println("Waiting for screenshot file to appear on Desktop...")
+	time.Sleep(1500 * time.Millisecond)
 
 	// Find the new screenshot file
 	newFile := s.findNewScreenshot(desktopPath, existingFiles)
 	if newFile == "" {
-		log.Println("Could not find new screenshot, using fallback")
+		log.Println("No new screenshot found on Desktop, using fallback")
 		return s.fallbackCapture()
 	}
 
-	// Move to our output dir
-	destPath := filepath.Join(s.outputDir, filepath.Base(newFile))
-	if err := os.Rename(newFile, destPath); err != nil {
-		// If move fails, just use original location
-		log.Printf("Could not move screenshot: %v", err)
-		return newFile, nil
+	log.Printf("Found new screenshot: %s", newFile)
+
+	// Move to our screenshots directory with a new name
+	timestamp := time.Now().UnixNano()
+	destName := fmt.Sprintf("screen_%d.png", timestamp)
+	destPath := filepath.Join(s.outputDir, destName)
+
+	// Copy the file (keeping original on Desktop)
+	input, err := os.ReadFile(newFile)
+	if err != nil {
+		log.Printf("Failed to read screenshot: %v", err)
+		return newFile, nil // Return original path
 	}
 
-	log.Printf("Screenshot saved to: %s", destPath)
+	if err := os.WriteFile(destPath, input, 0644); err != nil {
+		log.Printf("Failed to copy screenshot: %v", err)
+		return newFile, nil // Return original path
+	}
+
+	// Remove the original from Desktop
+	os.Remove(newFile)
+
+	log.Printf("=== SCREENSHOT SUCCESS: %s ===", destPath)
 	return destPath, nil
 }
 
-// getScreenshotFiles returns current screenshot files on desktop
-func (s *Screenshot) getScreenshotFiles(desktopPath string) map[string]bool {
+// getDesktopScreenshots returns current screenshot files on desktop
+func (s *Screenshot) getDesktopScreenshots(desktopPath string) map[string]bool {
 	files := make(map[string]bool)
 	entries, err := os.ReadDir(desktopPath)
 	if err != nil {
@@ -79,10 +103,12 @@ func (s *Screenshot) getScreenshotFiles(desktopPath string) map[string]bool {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		// macOS screenshot files start with "Screenshot" or "螢幕截圖"
+		// macOS screenshot files: "Screenshot YYYY-MM-DD at HH.MM.SS.png" (English)
+		// or "螢幕截圖" (Chinese) or "截屏" (Simplified Chinese)
 		if strings.HasPrefix(name, "Screenshot") ||
 			strings.HasPrefix(name, "螢幕截圖") ||
-			strings.HasPrefix(name, "截屏") {
+			strings.HasPrefix(name, "截屏") ||
+			strings.HasPrefix(name, "スクリーンショット") {
 			files[filepath.Join(desktopPath, name)] = true
 		}
 	}
@@ -101,7 +127,8 @@ func (s *Screenshot) findNewScreenshot(desktopPath string, existing map[string]b
 		name := entry.Name()
 		if strings.HasPrefix(name, "Screenshot") ||
 			strings.HasPrefix(name, "螢幕截圖") ||
-			strings.HasPrefix(name, "截屏") {
+			strings.HasPrefix(name, "截屏") ||
+			strings.HasPrefix(name, "スクリーンショット") {
 			fullPath := filepath.Join(desktopPath, name)
 			if !existing[fullPath] {
 				newFiles = append(newFiles, fullPath)
@@ -113,23 +140,24 @@ func (s *Screenshot) findNewScreenshot(desktopPath string, existing map[string]b
 		return ""
 	}
 
-	// Sort by name (which includes timestamp) and return newest
+	// Sort and return the newest (last in alphabetical order which includes timestamp)
 	sort.Strings(newFiles)
 	return newFiles[len(newFiles)-1]
 }
 
-// fallbackCapture uses screencapture command as fallback
+// fallbackCapture uses screencapture as fallback
 func (s *Screenshot) fallbackCapture() (string, error) {
 	log.Println("Using fallback screencapture...")
-	filename := fmt.Sprintf("screenshot_%d.png", time.Now().Unix())
+	timestamp := time.Now().UnixNano()
+	filename := fmt.Sprintf("screen_%d.png", timestamp)
 	path := filepath.Join(s.outputDir, filename)
 
-	cmd := exec.Command("screencapture", "-x", path)
+	cmd := exec.Command("screencapture", "-x", "-C", path)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("screencapture failed: %w", err)
 	}
 
-	log.Printf("Fallback screenshot saved to: %s", path)
+	log.Printf("Fallback screenshot saved: %s", path)
 	return path, nil
 }
 
