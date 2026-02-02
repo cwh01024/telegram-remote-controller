@@ -14,23 +14,21 @@ import (
 
 // MainHandler handles all incoming messages with full functionality
 type MainHandler struct {
-	Bot       *Bot
-	Auth      *auth.Whitelist
-	IDE       *controller.IDEController
-	Gemini    *gemini.Client
-	Capture   *controller.ResponseCapture
-	Clipboard *controller.ClipboardMonitor
+	Bot     *Bot
+	Auth    *auth.Whitelist
+	IDE     *controller.IDEController
+	Gemini  *gemini.Client
+	Monitor *controller.ResponseMonitor
 }
 
 // NewMainHandler creates a new main handler
 func NewMainHandler(bot *Bot, allowedUsers []int64) *MainHandler {
 	return &MainHandler{
-		Bot:       bot,
-		Auth:      auth.NewWhitelist(allowedUsers),
-		IDE:       controller.NewIDEController(),
-		Gemini:    gemini.NewClient(),
-		Capture:   controller.NewResponseCapture(),
-		Clipboard: controller.NewClipboardMonitor(),
+		Bot:     bot,
+		Auth:    auth.NewWhitelist(allowedUsers),
+		IDE:     controller.NewIDEController(),
+		Gemini:  gemini.NewClient(),
+		Monitor: controller.NewResponseMonitor(),
 	}
 }
 
@@ -66,14 +64,10 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 }
 
-// handleRun executes a prompt in Antigravity and waits for clipboard response
+// handleRun executes a prompt in Antigravity and waits for response
 func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 	h.Bot.SendText(chatID, fmt.Sprintf("🚀 執行中...\nModel: %s\nPrompt: %s",
 		orDefault(cmd.Model, "default"), cmd.Prompt))
-
-	// Clear clipboard before executing
-	log.Println("Clearing clipboard before run...")
-	h.Clipboard.SetClipboard("")
 
 	// Ensure IDE is ready
 	if err := h.IDE.EnsureReady(); err != nil {
@@ -90,32 +84,26 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 送出失敗: %v", err))
 	}
 
-	h.Bot.SendText(chatID, "✅ 已送出！監聽剪貼板中... (複製回應到剪貼板即可)")
+	h.Bot.SendText(chatID, "✅ 已送出！等待回應完成中...（監測螢幕變化）")
 
-	// Wait for clipboard to change
-	response, err := h.Clipboard.WaitForNewContent()
+	// Cleanup old screenshots
+	h.Monitor.CleanupOldScreenshots()
+
+	// Wait for screen to stabilize (response complete)
+	screenshotPath, err := h.Monitor.WaitForStableScreen()
 	if err != nil {
-		log.Printf("Clipboard monitoring failed: %v", err)
-		return h.Bot.SendText(chatID, "⏱️ 等待超時。使用 /screenshot 查看結果，或複製回應到剪貼板。")
+		log.Printf("Response monitoring failed: %v", err)
+		return h.Bot.SendText(chatID, "⏱️ 監測超時。使用 /screenshot 查看結果。")
 	}
 
-	// Summarize if Gemini is available and response is long
-	if h.Gemini.IsAvailable() && len(response) > 500 {
-		h.Bot.SendText(chatID, "🤖 使用 Gemini 摘要中...")
-		summary, err := h.Gemini.Summarize(response, 300)
-		if err == nil {
-			return h.Bot.SendMarkdown(chatID, fmt.Sprintf("📝 **回應摘要：**\n\n%s\n\n_（完整回應 %d 字）_", summary, len(response)))
-		}
-		log.Printf("Gemini summarization failed: %v", err)
+	// Send the response screenshot
+	h.Bot.SendText(chatID, "📸 回應完成：")
+	if err := h.Bot.SendPhoto(chatID, screenshotPath); err != nil {
+		log.Printf("Failed to send response screenshot: %v", err)
+		return h.Bot.SendText(chatID, "❌ 發送截圖失敗，請使用 /screenshot")
 	}
 
-	// Send full or truncated response
-	if len(response) > 4000 {
-		// Telegram has 4096 char limit
-		return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應（已截斷）：\n\n%s...\n\n（完整回應 %d 字）", response[:4000], len(response)))
-	}
-
-	return h.Bot.SendText(chatID, fmt.Sprintf("📝 回應：\n\n%s", response))
+	return nil
 }
 
 // handleScreenshot takes and sends a screenshot of the specified app
@@ -156,11 +144,11 @@ func (h *MainHandler) handleStatus(chatID int64) error {
 ✅ Bot: 運行中
 ✅ Auth: 已授權
 💻 IDE: Antigravity
-📋 回應擷取: 剪貼板監聽
+📸 回應偵測: 螢幕輪詢（6秒穩定）
 🤖 Gemini 摘要: %s
 
-📝 /run 會監聽剪貼板等待回應
-📸 /screenshot 截取指定應用程式`, geminiStatus)
+📝 /run 會監測螢幕等待回應完成
+📸 /screenshot <app> 截取指定應用程式`, geminiStatus)
 
 	return h.Bot.SendText(chatID, status)
 }
