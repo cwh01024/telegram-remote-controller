@@ -25,9 +25,9 @@ func NewResponseMonitor() *ResponseMonitor {
 	os.MkdirAll(dir, 0755)
 	return &ResponseMonitor{
 		screenshotDir: dir,
-		pollInterval:  2 * time.Second, // Check every 2 seconds
-		stableCount:   3,               // Need 3 identical screenshots (6 seconds stable)
-		timeout:       90 * time.Second,
+		pollInterval:  5 * time.Second,   // Check every 5 seconds
+		stableCount:   2,                 // Need 2 identical screenshots (10 seconds stable)
+		timeout:       120 * time.Second, // Wait up to 2 minutes
 	}
 }
 
