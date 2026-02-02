@@ -166,3 +166,28 @@ func (c *IDEController) TakeAntigravityScreenshot() (string, error) {
 	// Use system screenshot (Shift+Cmd+3)
 	return c.screenshot.CaptureScreen()
 }
+
+// FocusApp focuses the specified application
+func (c *IDEController) FocusApp(appName string) error {
+	log.Printf("Focusing app: %s", appName)
+
+	// Use AppleScript to activate the app
+	if err := automation.OpenApp(appName); err != nil {
+		return fmt.Errorf("failed to focus %s: %w", appName, err)
+	}
+
+	// Wait for app to come to front
+	time.Sleep(500 * time.Millisecond)
+
+	// Double activate to ensure it's really in front
+	automation.OpenApp(appName)
+	time.Sleep(300 * time.Millisecond)
+
+	return nil
+}
+
+// TakeScreenshotRaw takes a screenshot without focusing any specific app
+func (c *IDEController) TakeScreenshotRaw() (string, error) {
+	log.Println("Taking raw screenshot...")
+	return c.screenshot.CaptureScreen()
+}

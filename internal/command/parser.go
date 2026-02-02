@@ -23,15 +23,32 @@ var modelAliases = map[string]string{
 	"sonnet":   "Claude Sonnet 4",
 }
 
+// App aliases for common applications
+var appAliases = map[string]string{
+	"chrome":      "Google Chrome",
+	"safari":      "Safari",
+	"firefox":     "Firefox",
+	"code":        "Visual Studio Code",
+	"vscode":      "Visual Studio Code",
+	"terminal":    "Terminal",
+	"finder":      "Finder",
+	"antigravity": "Antigravity",
+	"ag":          "Antigravity",
+	"slack":       "Slack",
+	"discord":     "Discord",
+	"notion":      "Notion",
+}
+
 // DefaultModel is used when no model is specified
 const DefaultModel = "Claude Opus 4.5 (Thinking)"
 
 // Command represents a parsed user command
 type Command struct {
-	Name   string   // Command name (run, status, screenshot, help)
-	Model  string   // Model selection (expanded from alias)
-	Args   []string // Additional arguments
-	Prompt string   // The main prompt content (raw, preserved)
+	Name    string   // Command name (run, status, screenshot, help)
+	Model   string   // Model selection (expanded from alias)
+	Args    []string // Additional arguments
+	Prompt  string   // The main prompt content (raw, preserved)
+	AppName string   // For screenshot: which app to focus first
 }
 
 // Errors
@@ -78,7 +95,7 @@ func Parse(input string) (*Command, error) {
 	case CmdStatus:
 		return &Command{Name: CmdStatus}, nil
 	case CmdScreenshot:
-		return &Command{Name: CmdScreenshot}, nil
+		return parseScreenshotCommand(rest)
 	case CmdHelp:
 		return &Command{Name: CmdHelp}, nil
 	default:
@@ -128,6 +145,22 @@ func parseRunCommand(rest string) (*Command, error) {
 	return cmd, nil
 }
 
+// parseScreenshotCommand parses a /screenshot command with optional app name
+func parseScreenshotCommand(rest string) (*Command, error) {
+	cmd := &Command{
+		Name:    CmdScreenshot,
+		AppName: "Antigravity", // Default to Antigravity
+	}
+
+	rest = strings.TrimSpace(rest)
+	if rest != "" {
+		// User specified an app name
+		cmd.AppName = expandAppAlias(rest)
+	}
+
+	return cmd, nil
+}
+
 // expandModelAlias expands a model alias to full name
 func expandModelAlias(alias string) string {
 	lower := strings.ToLower(alias)
@@ -135,6 +168,16 @@ func expandModelAlias(alias string) string {
 		return full
 	}
 	// Return as-is if not an alias
+	return alias
+}
+
+// expandAppAlias expands an app alias to full name
+func expandAppAlias(alias string) string {
+	lower := strings.ToLower(alias)
+	if full, ok := appAliases[lower]; ok {
+		return full
+	}
+	// Return as-is if not an alias (user might have typed the full app name)
 	return alias
 }
 
@@ -152,8 +195,16 @@ func HelpText() string {
 • claude → Claude Opus 4.5
 • sonnet → Claude Sonnet 4
 
-📸 其他：
-/screenshot - 截取螢幕畫面
+📸 截圖：
+/screenshot - 截取 Antigravity
+/screenshot <app> - 截取指定應用程式
+
+📱 App 別名：
+• chrome, safari, firefox
+• code/vscode, terminal, finder
+• ag → Antigravity
+
+🔧 其他：
 /status - 檢查系統狀態
 /help - 顯示此說明
 

@@ -55,7 +55,7 @@ func (h *MainHandler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	case command.CmdRun:
 		return h.handleRun(chatID, cmd)
 	case command.CmdScreenshot:
-		return h.handleScreenshot(chatID)
+		return h.handleScreenshot(chatID, cmd.AppName)
 	case command.CmdStatus:
 		return h.handleStatus(chatID)
 	case command.CmdHelp:
@@ -108,11 +108,17 @@ func (h *MainHandler) handleRun(chatID int64, cmd *command.Command) error {
 	return nil
 }
 
-// handleScreenshot takes and sends a screenshot
-func (h *MainHandler) handleScreenshot(chatID int64) error {
-	h.Bot.SendText(chatID, "📸 截圖中...")
+// handleScreenshot takes and sends a screenshot of the specified app
+func (h *MainHandler) handleScreenshot(chatID int64, appName string) error {
+	h.Bot.SendText(chatID, fmt.Sprintf("📸 截圖 %s 中...", appName))
 
-	path, err := h.IDE.TakeScreenshot()
+	// Focus the specified app first
+	log.Printf("Focusing app: %s", appName)
+	if err := h.IDE.FocusApp(appName); err != nil {
+		log.Printf("Warning: failed to focus %s: %v", appName, err)
+	}
+
+	path, err := h.IDE.TakeScreenshotRaw()
 	if err != nil {
 		log.Printf("Screenshot failed: %v", err)
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 截圖失敗: %v", err))
