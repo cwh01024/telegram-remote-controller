@@ -88,10 +88,18 @@ func (h *MainHandler) handleScreenshot(chatID int64) error {
 
 	path, err := h.IDE.TakeScreenshot()
 	if err != nil {
+		log.Printf("Screenshot failed: %v", err)
 		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 截圖失敗: %v", err))
 	}
 
-	return h.Bot.SendPhoto(chatID, path)
+	log.Printf("Screenshot saved to: %s", path)
+
+	if err := h.Bot.SendPhoto(chatID, path); err != nil {
+		log.Printf("Failed to send photo to Telegram: %v", err)
+		return h.Bot.SendText(chatID, fmt.Sprintf("❌ 發送圖片失敗: %v", err))
+	}
+
+	return nil
 }
 
 // handleStatus returns system status

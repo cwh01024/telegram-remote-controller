@@ -77,9 +77,15 @@ func (b *Bot) SendText(chatID int64, text string) error {
 
 // SendPhoto sends a photo to a chat
 func (b *Bot) SendPhoto(chatID int64, photoPath string) error {
+	log.Printf("Sending photo: %s to chat %d", photoPath, chatID)
 	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(photoPath))
 	_, err := b.api.Send(photo)
-	return err
+	if err != nil {
+		log.Printf("Failed to send photo: %v", err)
+		return err
+	}
+	log.Println("Photo sent successfully")
+	return nil
 }
 
 // SendMarkdown sends a markdown-formatted message

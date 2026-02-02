@@ -2,8 +2,12 @@ package controller
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,113 +23,117 @@ func NewScreenshot() *Screenshot {
 	}
 }
 
-// CaptureScreen captures the entire screen (all displays)
+// CaptureScreen captures the screen using Shift+Cmd+3 shortcut
+// This saves to Desktop by default, then we move it
 func (s *Screenshot) CaptureScreen() (string, error) {
+	log.Println("Taking screenshot with Shift+Cmd+3...")
+
+	// Get desktop path
+	homeDir, _ := os.UserHomeDir()
+	desktopPath := filepath.Join(homeDir, "Desktop")
+
+	// Get existing screenshots before taking new one
+	existingFiles := s.getScreenshotFiles(desktopPath)
+
+	// Simulate Shift+Cmd+3 using AppleScript
+	script := `
+		tell application "System Events"
+			key code 20 using {command down, shift down}
+		end tell
+	`
+	cmd := exec.Command("osascript", "-e", script)
+	if err := cmd.Run(); err != nil {
+		log.Printf("Shift+Cmd+3 failed: %v, falling back to screencapture", err)
+		return s.fallbackCapture()
+	}
+
+	// Wait for screenshot to be saved
+	time.Sleep(1 * time.Second)
+
+	// Find the new screenshot file
+	newFile := s.findNewScreenshot(desktopPath, existingFiles)
+	if newFile == "" {
+		log.Println("Could not find new screenshot, using fallback")
+		return s.fallbackCapture()
+	}
+
+	// Move to our output dir
+	destPath := filepath.Join(s.outputDir, filepath.Base(newFile))
+	if err := os.Rename(newFile, destPath); err != nil {
+		// If move fails, just use original location
+		log.Printf("Could not move screenshot: %v", err)
+		return newFile, nil
+	}
+
+	log.Printf("Screenshot saved to: %s", destPath)
+	return destPath, nil
+}
+
+// getScreenshotFiles returns current screenshot files on desktop
+func (s *Screenshot) getScreenshotFiles(desktopPath string) map[string]bool {
+	files := make(map[string]bool)
+	entries, err := os.ReadDir(desktopPath)
+	if err != nil {
+		return files
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		// macOS screenshot files start with "Screenshot" or "螢幕截圖"
+		if strings.HasPrefix(name, "Screenshot") ||
+			strings.HasPrefix(name, "螢幕截圖") ||
+			strings.HasPrefix(name, "截屏") {
+			files[filepath.Join(desktopPath, name)] = true
+		}
+	}
+	return files
+}
+
+// findNewScreenshot finds a screenshot file that wasn't there before
+func (s *Screenshot) findNewScreenshot(desktopPath string, existing map[string]bool) string {
+	entries, err := os.ReadDir(desktopPath)
+	if err != nil {
+		return ""
+	}
+
+	var newFiles []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "Screenshot") ||
+			strings.HasPrefix(name, "螢幕截圖") ||
+			strings.HasPrefix(name, "截屏") {
+			fullPath := filepath.Join(desktopPath, name)
+			if !existing[fullPath] {
+				newFiles = append(newFiles, fullPath)
+			}
+		}
+	}
+
+	if len(newFiles) == 0 {
+		return ""
+	}
+
+	// Sort by name (which includes timestamp) and return newest
+	sort.Strings(newFiles)
+	return newFiles[len(newFiles)-1]
+}
+
+// fallbackCapture uses screencapture command as fallback
+func (s *Screenshot) fallbackCapture() (string, error) {
+	log.Println("Using fallback screencapture...")
 	filename := fmt.Sprintf("screenshot_%d.png", time.Now().Unix())
 	path := filepath.Join(s.outputDir, filename)
 
-	// Use -x for silent, capture main display
 	cmd := exec.Command("screencapture", "-x", path)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("screencapture failed: %w", err)
 	}
 
+	log.Printf("Fallback screenshot saved to: %s", path)
 	return path, nil
 }
 
-// CaptureAllDisplays captures all displays into one image
+// CaptureAllDisplays captures all displays
 func (s *Screenshot) CaptureAllDisplays() (string, error) {
-	filename := fmt.Sprintf("all_displays_%d.png", time.Now().Unix())
-	path := filepath.Join(s.outputDir, filename)
-
-	// -x silent, no -D flag = captures all displays
-	cmd := exec.Command("screencapture", "-x", path)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("screencapture failed: %w", err)
-	}
-
-	return path, nil
-}
-
-// CaptureDisplay captures a specific display by number (1-indexed)
-func (s *Screenshot) CaptureDisplay(displayNum int) (string, error) {
-	filename := fmt.Sprintf("display%d_%d.png", displayNum, time.Now().Unix())
-	path := filepath.Join(s.outputDir, filename)
-
-	// -D flag specifies which display to capture
-	cmd := exec.Command("screencapture", "-x", "-D", fmt.Sprintf("%d", displayNum), path)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("screencapture failed: %w", err)
-	}
-
-	return path, nil
-}
-
-// CaptureAntigravityWindow captures the Antigravity window specifically
-func (s *Screenshot) CaptureAntigravityWindow() (string, error) {
-	filename := fmt.Sprintf("antigravity_%d.png", time.Now().Unix())
-	path := filepath.Join(s.outputDir, filename)
-
-	// Use screencapture with window ID via AppleScript
-	script := fmt.Sprintf(`
-		tell application "System Events"
-			set frontApp to first application process whose frontmost is true
-			set windowID to id of first window of frontApp
-		end tell
-		do shell script "screencapture -x -l " & windowID & " %s"
-	`, path)
-
-	cmd := exec.Command("osascript", "-e", script)
-	if err := cmd.Run(); err != nil {
-		// Fallback to regular screenshot if window capture fails
-		return s.CaptureScreen()
-	}
-
-	return path, nil
-}
-
-// CaptureWindow captures a specific window (interactive)
-func (s *Screenshot) CaptureWindow() (string, error) {
-	filename := fmt.Sprintf("window_%d.png", time.Now().Unix())
-	path := filepath.Join(s.outputDir, filename)
-
-	// -w flag captures a window (requires user to click on it)
-	cmd := exec.Command("screencapture", "-x", "-w", path)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("screencapture failed: %w", err)
-	}
-
-	return path, nil
-}
-
-// CaptureRect captures a specific screen rectangle
-func (s *Screenshot) CaptureRect(x, y, width, height int) (string, error) {
-	filename := fmt.Sprintf("rect_%d.png", time.Now().Unix())
-	path := filepath.Join(s.outputDir, filename)
-
-	// -R flag captures a specific rectangle
-	rect := fmt.Sprintf("%d,%d,%d,%d", x, y, width, height)
-	cmd := exec.Command("screencapture", "-x", "-R", rect, path)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("screencapture failed: %w", err)
-	}
-
-	return path, nil
-}
-
-// CleanupOld removes screenshots older than the specified duration
-func (s *Screenshot) CleanupOld(maxAge time.Duration) error {
-	pattern := filepath.Join(s.outputDir, "screenshot_*.png")
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		return err
-	}
-
-	_ = maxAge // TODO: Implement age-based cleanup
-	for _, f := range files {
-		// For simplicity, just log files found
-		_ = f
-	}
-
-	return nil
+	return s.CaptureScreen()
 }

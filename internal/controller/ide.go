@@ -136,11 +136,6 @@ func (c *IDEController) TakeAntigravityScreenshot() (string, error) {
 	}
 	time.Sleep(300 * time.Millisecond)
 
-	// Try window capture first
-	path, err := c.screenshot.CaptureAntigravityWindow()
-	if err != nil {
-		// Fallback to full screen
-		return c.screenshot.CaptureScreen()
-	}
-	return path, nil
+	// Use system screenshot (Shift+Cmd+3)
+	return c.screenshot.CaptureScreen()
 }
